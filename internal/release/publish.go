@@ -155,7 +155,7 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 		return err
 	}
 
-	artifacts, err := RunBuild(repoRoot, in.Config, in.Stdout, in.Stderr)
+	artifacts, err := RunBuild(repoRoot, in.Config, BuildEnvForVersion(current), in.Stdout, in.Stderr)
 	if err != nil {
 		return fmt.Errorf("run build: %w", err)
 	}

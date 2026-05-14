@@ -18,12 +18,18 @@ import (
 // relative to repoRoot and the matching file paths are returned in
 // sorted order (directories are filtered out).
 //
+// extraEnv is merged into the command's environment on top of the
+// caller's os.Environ(). Use BuildEnvForVersion to produce the standard
+// RELEASER_VERSION / RELEASER_TAG variables; user build commands can
+// also expect any other custom variables a future adapter chooses to
+// inject. nil extraEnv is allowed.
+//
 // Shell features such as &&, pipelines, redirection, and parameter
 // expansion are available since the command is interpreted by /bin/sh.
 //
 // An empty artifact list is treated as an error: producing zero files to
 // attach is almost always a misconfiguration.
-func RunBuild(repoRoot string, cfg config.Config, stdout, stderr io.Writer) ([]string, error) {
+func RunBuild(repoRoot string, cfg config.Config, extraEnv map[string]string, stdout, stderr io.Writer) ([]string, error) {
 	if cfg.Build.Command == "" {
 		return nil, errors.New("no build.command configured")
 	}
@@ -42,6 +48,13 @@ func RunBuild(repoRoot string, cfg config.Config, stdout, stderr io.Writer) ([]s
 	cmd.Dir = repoRoot
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	if len(extraEnv) > 0 {
+		env := os.Environ()
+		for k, v := range extraEnv {
+			env = append(env, k+"="+v)
+		}
+		cmd.Env = env
+	}
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("build command failed: %w", err)
 	}
@@ -54,6 +67,23 @@ func RunBuild(repoRoot string, cfg config.Config, stdout, stderr io.Writer) ([]s
 		return nil, fmt.Errorf("build artifacts glob %q matched no files", cfg.Build.Artifacts)
 	}
 	return artifacts, nil
+}
+
+// BuildEnvForVersion returns the standard environment variables
+// releaser exports to the user's build command for a given target
+// version. Build tools that need the version pick them up from there:
+//
+//	RELEASER_VERSION=<X.Y.Z>   bare semver
+//	RELEASER_TAG=v<X.Y.Z>      tag form (with leading "v")
+//
+// Example use in a project's build.command for go-releaser:
+//
+//	GORELEASER_CURRENT_TAG=$RELEASER_TAG goreleaser release --skip=publish --clean
+func BuildEnvForVersion(v Semver) map[string]string {
+	return map[string]string{
+		"RELEASER_VERSION": v.String(),
+		"RELEASER_TAG":     "v" + v.String(),
+	}
 }
 
 // resolveArtifacts expands a glob relative to repoRoot and returns the

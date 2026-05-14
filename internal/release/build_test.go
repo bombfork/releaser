@@ -18,7 +18,7 @@ func TestRunBuild_HappyPath(t *testing.T) {
 		Artifacts: "dist/*.tar.gz",
 	}}
 
-	artifacts, err := release.RunBuild(repo, cfg, io.Discard, io.Discard)
+	artifacts, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("RunBuild: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestRunBuild_StreamsStdoutAndStderr(t *testing.T) {
 	}}
 
 	var stdout, stderr bytes.Buffer
-	if _, err := release.RunBuild(repo, cfg, &stdout, &stderr); err != nil {
+	if _, err := release.RunBuild(repo, cfg, nil, &stdout, &stderr); err != nil {
 		t.Fatalf("RunBuild: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "to-stdout") {
@@ -67,7 +67,7 @@ func TestRunBuild_BuildCommandFailureIsError(t *testing.T) {
 		Command:   "exit 7",
 		Artifacts: "dist/*",
 	}}
-	_, err := release.RunBuild(repo, cfg, io.Discard, io.Discard)
+	_, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected error when build command fails")
 	}
@@ -79,7 +79,7 @@ func TestRunBuild_GlobMatchesNothingIsError(t *testing.T) {
 		Command:   "true", // succeeds but produces nothing
 		Artifacts: "dist/*",
 	}}
-	_, err := release.RunBuild(repo, cfg, io.Discard, io.Discard)
+	_, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected error when artifacts glob matches nothing")
 	}
@@ -93,7 +93,7 @@ func TestRunBuild_DirectoriesFilteredFromGlob(t *testing.T) {
 		Command:   "mkdir -p dist/sub && touch dist/release.tar.gz",
 		Artifacts: "dist/*",
 	}}
-	artifacts, err := release.RunBuild(repo, cfg, io.Discard, io.Discard)
+	artifacts, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("RunBuild: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestRunBuild_RunsInRepoRoot(t *testing.T) {
 		Command:   "pwd > dist-pwd.txt && mkdir -p dist && touch dist/x",
 		Artifacts: "dist/*",
 	}}
-	if _, err := release.RunBuild(repo, cfg, io.Discard, io.Discard); err != nil {
+	if _, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("RunBuild: %v", err)
 	}
 	got := readFile(t, filepath.Join(repo, "dist-pwd.txt"))
@@ -128,14 +128,44 @@ func TestRunBuild_RunsInRepoRoot(t *testing.T) {
 
 func TestRunBuild_NoCommandConfigured(t *testing.T) {
 	cfg := config.Config{Build: config.Build{Artifacts: "dist/*"}}
-	if _, err := release.RunBuild(t.TempDir(), cfg, io.Discard, io.Discard); err == nil {
+	if _, err := release.RunBuild(t.TempDir(), cfg, nil, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error for missing build.command")
 	}
 }
 
 func TestRunBuild_NoArtifactsConfigured(t *testing.T) {
 	cfg := config.Config{Build: config.Build{Command: "true"}}
-	if _, err := release.RunBuild(t.TempDir(), cfg, io.Discard, io.Discard); err == nil {
+	if _, err := release.RunBuild(t.TempDir(), cfg, nil, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error for missing build.artifacts")
+	}
+}
+
+func TestRunBuild_ExtraEnvIsExportedToCommand(t *testing.T) {
+	repo := t.TempDir()
+	cfg := config.Config{Build: config.Build{
+		Command:   "mkdir -p dist && printf '%s\\n%s\\n' \"$RELEASER_VERSION\" \"$RELEASER_TAG\" > dist/env.txt && touch dist/out",
+		Artifacts: "dist/*",
+	}}
+
+	env := release.BuildEnvForVersion(release.Semver{Minor: 2})
+	if _, err := release.RunBuild(repo, cfg, env, io.Discard, io.Discard); err != nil {
+		t.Fatalf("RunBuild: %v", err)
+	}
+	got := readFile(t, filepath.Join(repo, "dist/env.txt"))
+	wantLines := []string{"0.2.0", "v0.2.0"}
+	for _, line := range wantLines {
+		if !strings.Contains(got, line) {
+			t.Errorf("env capture missing %q:\n%s", line, got)
+		}
+	}
+}
+
+func TestBuildEnvForVersion(t *testing.T) {
+	got := release.BuildEnvForVersion(release.Semver{Major: 1, Minor: 2, Patch: 3})
+	if got["RELEASER_VERSION"] != "1.2.3" {
+		t.Errorf("RELEASER_VERSION = %q, want %q", got["RELEASER_VERSION"], "1.2.3")
+	}
+	if got["RELEASER_TAG"] != "v1.2.3" {
+		t.Errorf("RELEASER_TAG = %q, want %q", got["RELEASER_TAG"], "v1.2.3")
 	}
 }
