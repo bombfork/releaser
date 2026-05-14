@@ -1,0 +1,85 @@
+name: releaser
+description: Run the bombfork/releaser CLI in a workflow. Downloads the binary matching this action's version and invokes it.
+author: bombfork
+
+inputs:
+  command:
+    description: Releaser subcommand to invoke (e.g. "release", "release --dry-run").
+    required: true
+  github-token:
+    description: GitHub token used by the CLI to interact with the GitHub API.
+    required: true
+    default: ${{ github.token }}
+  working-directory:
+    description: Directory in which to run the releaser command.
+    required: false
+    default: ${{ github.workspace }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve action version
+      id: version
+      shell: bash
+      run: |
+        ref="${{ github.action_ref }}"
+        if [[ -z "${ref}" ]]; then
+          echo "action ref is empty; cannot determine binary version" >&2
+          exit 1
+        fi
+        echo "version=${ref}" >> "${GITHUB_OUTPUT}"
+
+    - name: Resolve platform
+      id: platform
+      shell: bash
+      run: |
+        case "${RUNNER_OS}" in
+          Linux)   os=linux ;;
+          macOS)   os=darwin ;;
+          Windows) os=windows ;;
+          *) echo "unsupported runner OS: ${RUNNER_OS}" >&2; exit 1 ;;
+        esac
+        case "${RUNNER_ARCH}" in
+          X64)   arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "unsupported runner arch: ${RUNNER_ARCH}" >&2; exit 1 ;;
+        esac
+        echo "os=${os}" >> "${GITHUB_OUTPUT}"
+        echo "arch=${arch}" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore releaser binary from cache
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.tool_cache }}/releaser/${{ steps.version.outputs.version }}
+        key: releaser-${{ steps.version.outputs.version }}-${{ steps.platform.outputs.os }}-${{ steps.platform.outputs.arch }}
+
+    - name: Download releaser binary
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+        OS: ${{ steps.platform.outputs.os }}
+        ARCH: ${{ steps.platform.outputs.arch }}
+        TOOL_CACHE: ${{ runner.tool_cache }}
+      run: |
+        set -euo pipefail
+        dest="${TOOL_CACHE}/releaser/${VERSION}"
+        mkdir -p "${dest}"
+        url="https://github.com/bombfork/releaser/releases/download/${VERSION}/releaser_${OS}_${ARCH}.tar.gz"
+        echo "Downloading ${url}"
+        curl --fail --location --silent --show-error --output /tmp/releaser.tgz "${url}"
+        tar -xzf /tmp/releaser.tgz -C "${dest}"
+        rm -f /tmp/releaser.tgz
+        chmod +x "${dest}/releaser"
+
+    - name: Run releaser
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        RELEASER_BIN: ${{ runner.tool_cache }}/releaser/${{ steps.version.outputs.version }}/releaser
+        RELEASER_ARGS: ${{ inputs.command }}
+      run: |
+        set -euo pipefail
+        eval "${RELEASER_BIN} ${RELEASER_ARGS}"

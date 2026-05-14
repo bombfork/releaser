@@ -1,0 +1,32 @@
+[tools]
+go = "latest"
+golangci-lint = "latest"
+gotestsum = "latest"
+
+[tasks.build]
+description = "build the releaser binary"
+run = "go build -C cmd -o ../releaser"
+
+[tasks.format]
+description = "format"
+run = 'find . -name "*.go" -exec go fmt {} \;'
+
+[tasks.format-diff]
+description = "format git diff"
+run = 'git fetch origin && for f in $(git diff --name-only origin/main | grep .go); do [[ -f ${f} ]] && go fmt ${f} || echo "ignoring removed file ${f}"; done'
+
+[tasks.lint]
+description = "lint"
+run = "golangci-lint run"
+
+[tasks.test]
+description = "test"
+run = "gotestsum --format testname"
+
+[tasks.coverage]
+description = "Print a test coverage report"
+run = 'go test -coverprofile=coverage.out ./... >/dev/null 2>&1; go tool cover -func=coverage.out | grep -v "100.0%"; rm coverage.out'
+
+[tasks.check]
+description = "run format, lint, build, test"
+depends = ["format", "lint", "build", "test"]

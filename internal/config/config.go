@@ -1,0 +1,74 @@
+// Package config defines the on-disk releaser configuration.
+//
+// The configuration is intentionally minimal in v1: a single project per repo,
+// with the user supplying the build command, artifact glob, and locations of
+// the project version string. Adapters may augment, constrain, or fill in
+// parts of this structure.
+package config
+
+// BumpLevel is the version increment driven by a commit type.
+type BumpLevel string
+
+const (
+	BumpPatch BumpLevel = "patch"
+	BumpMinor BumpLevel = "minor"
+	BumpMajor BumpLevel = "major"
+	BumpNone  BumpLevel = "none"
+)
+
+// Config is the full releaser configuration as stored on disk.
+type Config struct {
+	// Adapter is the name of the stack adapter that owns this configuration
+	// (e.g. "generic"). Determines which validation, autodetection, and
+	// workflow-generation rules apply.
+	Adapter string `yaml:"adapter"`
+
+	// Build describes how to produce the release artifacts.
+	Build Build `yaml:"build"`
+
+	// Commit overrides the default conventional-commit → bump-level mapping.
+	Commit Commit `yaml:"commit,omitempty"`
+
+	// Version describes where the project version string lives in the repo.
+	Version Version `yaml:"version,omitempty"`
+}
+
+// Build describes how to produce release artifacts and which files to attach.
+type Build struct {
+	// Command is the shell command (or path to a script) that produces the
+	// release artifacts when executed at the repository root.
+	Command string `yaml:"command"`
+
+	// Artifacts is a glob pattern matching the files to attach to the
+	// GitHub release.
+	Artifacts string `yaml:"artifacts"`
+}
+
+// Commit holds commit-convention overrides.
+type Commit struct {
+	// Conventions maps a commit type prefix (e.g. "deps", "fix", "feat") to
+	// the bump level it should trigger. Unset entries fall back to the
+	// built-in conventional-commit defaults.
+	Conventions map[string]BumpLevel `yaml:"conventions,omitempty"`
+}
+
+// Version describes how to find and update the project version string.
+type Version struct {
+	// Locations is the list of (file, regex) pairs where the project version
+	// string appears. The release process updates each location atomically.
+	Locations []VersionLocation `yaml:"locations,omitempty"`
+}
+
+// VersionLocation is a single (file, regex) pair locating a version string.
+// The regex must contain exactly one capturing group around the version itself.
+type VersionLocation struct {
+	Path  string `yaml:"path"`
+	Regex string `yaml:"regex"`
+}
+
+// Suggestions is the set of values an adapter can infer from a repository,
+// used by `releaser init` to pre-fill prompts.
+type Suggestions struct {
+	Build   *Build
+	Version *Version
+}
