@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -40,7 +41,9 @@ wrote the workflow, so the action and the binary are always in lockstep.`,
 }
 
 // resolveActionRef returns the user-supplied ref, or a smart default
-// derived from the running CLI's Version.
+// derived from the running CLI's Version. Releaser tags are v-prefixed
+// (publish.go uses "v"+semver); a bare semver in Version is upgraded to
+// the matching tag form so the generated workflows resolve.
 func resolveActionRef(userSupplied string) string {
 	if userSupplied != "" {
 		return userSupplied
@@ -48,7 +51,10 @@ func resolveActionRef(userSupplied string) string {
 	if Version == "" || Version == "dev" {
 		return "main"
 	}
-	return Version
+	if strings.HasPrefix(Version, "v") {
+		return Version
+	}
+	return "v" + Version
 }
 
 func runGenerate(repoRoot, actionRef string) error {
