@@ -23,9 +23,33 @@ For ongoing edits, prefer the get/set subcommands.`,
 	cmd.AddCommand(
 		newConfigGetCommand(),
 		newConfigSetCommand(),
+		newConfigVersionCommand(),
 	)
 
 	return cmd
+}
+
+// mutateConfig loads the configuration, applies mutate, validates the
+// result against the configured adapter, and saves on success. If
+// validation fails the file is left untouched. The pattern is shared
+// by `config set` and the `config version` subcommands.
+func mutateConfig(repoRoot string, mutate func(*config.Config) error) error {
+	cfg, err := config.Load(repoRoot)
+	if err != nil {
+		return fmt.Errorf("load configuration: %w", err)
+	}
+	if err := mutate(cfg); err != nil {
+		return err
+	}
+	registry := adapters.DefaultRegistry()
+	ad, ok := registry.ByName(cfg.Adapter)
+	if !ok {
+		return fmt.Errorf("unknown adapter %q in configuration", cfg.Adapter)
+	}
+	if err := ad.ValidateConfig(*cfg); err != nil {
+		return fmt.Errorf("configuration would not satisfy %s adapter: %w", cfg.Adapter, err)
+	}
+	return config.Save(repoRoot, cfg)
 }
 
 func newConfigGetCommand() *cobra.Command {
@@ -74,22 +98,9 @@ subcommands (forthcoming).`,
 			if err != nil {
 				return err
 			}
-			cfg, err := config.Load(repoRoot)
-			if err != nil {
-				return fmt.Errorf("load configuration: %w", err)
-			}
-			if err := cfg.Set(args[0], args[1]); err != nil {
-				return err
-			}
-			registry := adapters.DefaultRegistry()
-			ad, ok := registry.ByName(cfg.Adapter)
-			if !ok {
-				return fmt.Errorf("unknown adapter %q in configuration", cfg.Adapter)
-			}
-			if err := ad.ValidateConfig(*cfg); err != nil {
-				return fmt.Errorf("configuration would not satisfy %s adapter: %w", cfg.Adapter, err)
-			}
-			return config.Save(repoRoot, cfg)
+			return mutateConfig(repoRoot, func(c *config.Config) error {
+				return c.Set(args[0], args[1])
+			})
 		},
 	}
 }
