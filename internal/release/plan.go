@@ -22,9 +22,17 @@ type Plan struct {
 	ReleaseWarranted bool // true iff Bump != BumpNone
 }
 
-// BuildPlan inspects the repository at repoRoot and returns a Plan
-// describing what a release would do. It does not modify anything.
-func BuildPlan(repoRoot string, cfg config.Config, _ adapter.Adapter) (*Plan, error) {
+// BuildPlan walks the commits reachable from HEAD since the latest semver
+// tag and returns a Plan describing what a release would do. It does not
+// modify anything. Use BuildPlanFromRef to walk from a specific ref.
+func BuildPlan(repoRoot string, cfg config.Config, ad adapter.Adapter) (*Plan, error) {
+	return BuildPlanFromRef(repoRoot, "", cfg, ad)
+}
+
+// BuildPlanFromRef is the same as BuildPlan but walks the commits
+// reachable from fromRef instead of HEAD. fromRef may be any revision
+// string accepted by go-git (e.g. "refs/remotes/origin/main").
+func BuildPlanFromRef(repoRoot, fromRef string, cfg config.Config, _ adapter.Adapter) (*Plan, error) {
 	lastTag, err := LatestVersionTag(repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read latest tag: %w", err)
@@ -38,7 +46,7 @@ func BuildPlan(repoRoot string, cfg config.Config, _ adapter.Adapter) (*Plan, er
 		}
 	}
 
-	commits, err := CommitsSince(repoRoot, lastTag)
+	commits, err := CommitsSinceFromRef(repoRoot, lastTag, fromRef)
 	if err != nil {
 		return nil, fmt.Errorf("list commits: %w", err)
 	}

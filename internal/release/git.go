@@ -46,17 +46,36 @@ func LatestVersionTag(repoRoot string) (string, error) {
 	return highestName, nil
 }
 
-// CommitsSince returns the commits on the current branch after sinceTag,
-// in oldest-first order. If sinceTag is "", every reachable commit is
-// returned (treated as the initial-release scenario).
+// CommitsSince returns the commits on HEAD's branch after sinceTag, in
+// oldest-first order. If sinceTag is "", every reachable commit from HEAD
+// is returned (initial-release scenario). For walks starting at a
+// non-HEAD reference, use CommitsSinceFromRef.
 func CommitsSince(repoRoot, sinceTag string) ([]Commit, error) {
+	return CommitsSinceFromRef(repoRoot, sinceTag, "")
+}
+
+// CommitsSinceFromRef returns the commits reachable from fromRef but not
+// from sinceTag, in oldest-first order. fromRef may be empty (meaning
+// HEAD) or any revision string accepted by ResolveRevision (e.g.
+// "refs/remotes/origin/main").
+func CommitsSinceFromRef(repoRoot, sinceTag, fromRef string) ([]Commit, error) {
 	repo, err := git.PlainOpen(repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("open repository at %s: %w", repoRoot, err)
 	}
-	head, err := repo.Head()
-	if err != nil {
-		return nil, fmt.Errorf("resolve HEAD: %w", err)
+	var fromHash plumbing.Hash
+	if fromRef == "" {
+		head, err := repo.Head()
+		if err != nil {
+			return nil, fmt.Errorf("resolve HEAD: %w", err)
+		}
+		fromHash = head.Hash()
+	} else {
+		h, err := repo.ResolveRevision(plumbing.Revision(fromRef))
+		if err != nil {
+			return nil, fmt.Errorf("resolve %s: %w", fromRef, err)
+		}
+		fromHash = *h
 	}
 
 	stopAt := plumbing.ZeroHash
@@ -67,7 +86,7 @@ func CommitsSince(repoRoot, sinceTag string) ([]Commit, error) {
 		}
 	}
 
-	iter, err := repo.Log(&git.LogOptions{From: head.Hash()})
+	iter, err := repo.Log(&git.LogOptions{From: fromHash})
 	if err != nil {
 		return nil, fmt.Errorf("walk log: %w", err)
 	}
