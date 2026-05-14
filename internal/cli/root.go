@@ -7,6 +7,11 @@ import (
 // Version is set at build time via -ldflags "-X github.com/bombfork/releaser/internal/cli.Version=...".
 var Version = "dev"
 
+// RepoRootFlag is the name of the persistent flag that points at the
+// repository root the releaser operates on. Subcommands read it via
+// cmd.Flags().GetString(RepoRootFlag).
+const RepoRootFlag = "repo-root"
+
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "releaser",
@@ -15,6 +20,8 @@ func NewRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+
+	root.PersistentFlags().String(RepoRootFlag, ".", "Path to the repository root the releaser operates on")
 
 	root.AddCommand(
 		newInitCommand(),

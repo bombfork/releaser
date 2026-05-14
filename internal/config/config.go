@@ -16,6 +16,10 @@ const (
 	BumpNone  BumpLevel = "none"
 )
 
+// DefaultFilePath is the path of the releaser configuration file, relative
+// to the repository root.
+const DefaultFilePath = ".github/releaser.yaml"
+
 // Config is the full releaser configuration as stored on disk.
 type Config struct {
 	// Adapter is the name of the stack adapter that owns this configuration
@@ -31,6 +35,43 @@ type Config struct {
 
 	// Version describes where the project version string lives in the repo.
 	Version Version `yaml:"version,omitempty"`
+
+	// Workflows configures the names of the workflow files written by
+	// `releaser generate`. Unset fields fall back to DefaultWorkflows().
+	Workflows Workflows `yaml:"workflows,omitempty"`
+}
+
+// Workflows holds the names of the workflow files produced by `generate`.
+// File names are relative to .github/workflows/.
+type Workflows struct {
+	// PendingReleaseFile is the workflow that maintains the pending-release
+	// pull request on every push to the default branch.
+	PendingReleaseFile string `yaml:"pending_release_file,omitempty"`
+
+	// PublishFile is the workflow that publishes the release when the
+	// pending-release pull request is merged.
+	PublishFile string `yaml:"publish_file,omitempty"`
+}
+
+// DefaultWorkflows returns the default file names used when the user does
+// not override them in their configuration.
+func DefaultWorkflows() Workflows {
+	return Workflows{
+		PendingReleaseFile: "releaser-pending-release.yml",
+		PublishFile:        "releaser-publish.yml",
+	}
+}
+
+// WithDefaults returns w with any unset fields filled in from DefaultWorkflows.
+func (w Workflows) WithDefaults() Workflows {
+	d := DefaultWorkflows()
+	if w.PendingReleaseFile == "" {
+		w.PendingReleaseFile = d.PendingReleaseFile
+	}
+	if w.PublishFile == "" {
+		w.PublishFile = d.PublishFile
+	}
+	return w
 }
 
 // Build describes how to produce release artifacts and which files to attach.

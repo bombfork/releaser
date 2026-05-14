@@ -5,6 +5,7 @@ go 1.26.1
 require (
 	github.com/bombfork/gh-token-go v0.6.11
 	github.com/spf13/cobra v1.10.2
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
