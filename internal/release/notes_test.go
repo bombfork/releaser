@@ -34,7 +34,7 @@ func TestFormatReleaseNotes_GroupsByCategory(t *testing.T) {
 	posFeatures := strings.Index(got, "### Features")
 	posFixes := strings.Index(got, "### Bug fixes")
 	posOther := strings.Index(got, "### Other changes")
-	if !(posBreaking < posFeatures && posFeatures < posFixes && posFixes < posOther) {
+	if posBreaking >= posFeatures || posFeatures >= posFixes || posFixes >= posOther {
 		t.Errorf("sections out of order:\n%s", got)
 	}
 }
