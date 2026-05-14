@@ -55,6 +55,18 @@ func (s Semver) String() string {
 	return fmt.Sprintf("%d.%d.%d", s.Major, s.Minor, s.Patch)
 }
 
+// Greater reports whether s is strictly greater than o using
+// component-wise semver ordering.
+func (s Semver) Greater(o Semver) bool {
+	if s.Major != o.Major {
+		return s.Major > o.Major
+	}
+	if s.Minor != o.Minor {
+		return s.Minor > o.Minor
+	}
+	return s.Patch > o.Patch
+}
+
 // Bump returns a new Semver after applying the given level. Lower segments
 // reset to zero on a higher-level bump. BumpNone returns the version unchanged.
 func (s Semver) Bump(level config.BumpLevel) Semver {

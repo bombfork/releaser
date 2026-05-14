@@ -1,104 +1,119 @@
 package release
 
 import (
+	"errors"
 	"fmt"
-	"os/exec"
+	"slices"
 	"strings"
-)
 
-// Field/record separators used when serializing commits via git's
-// `--pretty=format:` output. ASCII control bytes that argv allows (NUL
-// is forbidden in argv strings on Linux) and that are not expected to
-// appear in commit metadata.
-const (
-	gitFieldSep  = "\x1f" // US (unit separator)
-	gitRecordSep = "\x1e" // RS (record separator)
+	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 )
 
 // LatestVersionTag returns the highest-precedence semver-shaped tag in
 // the repository at repoRoot, or "" if no such tag exists.
 //
-// Tags are filtered with the fnmatch pattern "v*.*.*", then verified to
-// parse as Semver. Pre-release-shaped tags are ignored.
+// Tags whose short names do not parse as a Semver (per ParseSemver) are
+// ignored.
 func LatestVersionTag(repoRoot string) (string, error) {
-	out, err := runGit(repoRoot, "tag", "--list", "v*.*.*", "--sort=-v:refname")
+	repo, err := git.PlainOpen(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("open repository at %s: %w", repoRoot, err)
+	}
+	iter, err := repo.Tags()
 	if err != nil {
 		return "", fmt.Errorf("list tags: %w", err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
+	var highestName string
+	var highest Semver
+	err = iter.ForEach(func(ref *plumbing.Reference) error {
+		name := ref.Name().Short()
+		v, perr := ParseSemver(name)
+		if perr != nil {
+			return nil
 		}
-		if _, err := ParseSemver(line); err == nil {
-			return line, nil
+		if highestName == "" || v.Greater(highest) {
+			highest = v
+			highestName = name
 		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("iterate tags: %w", err)
 	}
-	return "", nil
+	return highestName, nil
 }
 
 // CommitsSince returns the commits on the current branch after sinceTag,
 // in oldest-first order. If sinceTag is "", every reachable commit is
 // returned (treated as the initial-release scenario).
 func CommitsSince(repoRoot, sinceTag string) ([]Commit, error) {
-	format := "%H" + gitFieldSep + "%P" + gitFieldSep + "%s" + gitFieldSep + "%b" + gitRecordSep
-	args := []string{"log", "--reverse", "--pretty=format:" + format}
+	repo, err := git.PlainOpen(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("open repository at %s: %w", repoRoot, err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("resolve HEAD: %w", err)
+	}
+
+	stopAt := plumbing.ZeroHash
 	if sinceTag != "" {
-		args = append(args, sinceTag+"..HEAD")
+		stopAt, err = resolveTagToCommit(repo, sinceTag)
+		if err != nil {
+			return nil, err
+		}
 	}
-	out, err := runGit(repoRoot, args...)
-	if err != nil {
-		return nil, fmt.Errorf("git log: %w", err)
-	}
-	return parseCommitLog(out), nil
-}
 
-func parseCommitLog(out string) []Commit {
-	out = strings.Trim(out, "\n")
-	if out == "" {
-		return nil
+	iter, err := repo.Log(&git.LogOptions{From: head.Hash()})
+	if err != nil {
+		return nil, fmt.Errorf("walk log: %w", err)
 	}
-	records := strings.Split(out, gitRecordSep)
-	commits := make([]Commit, 0, len(records))
-	for _, r := range records {
-		r = strings.TrimLeft(r, "\n")
-		if r == "" {
-			continue
+	var commits []Commit
+	err = iter.ForEach(func(c *object.Commit) error {
+		if c.Hash == stopAt {
+			return storer.ErrStop
 		}
-		fields := strings.SplitN(r, gitFieldSep, 4)
-		if len(fields) < 4 {
-			continue
-		}
-		parentCount := 0
-		if p := strings.TrimSpace(fields[1]); p != "" {
-			parentCount = len(strings.Fields(p))
-		}
+		subject, body := splitCommitMessage(c.Message)
 		commits = append(commits, Commit{
-			Hash:        fields[0],
-			ParentCount: parentCount,
-			Subject:     fields[2],
-			Body:        strings.TrimRight(fields[3], "\n"),
+			Hash:        c.Hash.String(),
+			Subject:     subject,
+			Body:        body,
+			ParentCount: c.NumParents(),
 		})
+		return nil
+	})
+	if err != nil && !errors.Is(err, storer.ErrStop) {
+		return nil, fmt.Errorf("iterate log: %w", err)
 	}
-	return commits
+	slices.Reverse(commits)
+	return commits, nil
 }
 
-// runGit executes `git -C repoRoot <args...>` and returns combined stdout.
-// stderr is folded into the returned error to make non-git directories
-// and other failures diagnosable.
-func runGit(repoRoot string, args ...string) (string, error) {
-	full := append([]string{"-C", repoRoot}, args...)
-	cmd := exec.Command("git", full...) // #nosec G204 -- args are tool-internal, never user-supplied
-	out, err := cmd.Output()
+// resolveTagToCommit returns the commit hash a tag ultimately points to,
+// transparently handling both lightweight and annotated tags.
+func resolveTagToCommit(repo *git.Repository, tag string) (plumbing.Hash, error) {
+	ref, err := repo.Tag(tag)
 	if err != nil {
-		var stderr string
-		if ee, ok := err.(*exec.ExitError); ok {
-			stderr = strings.TrimSpace(string(ee.Stderr))
-		}
-		if stderr != "" {
-			return "", fmt.Errorf("%w: %s", err, stderr)
-		}
-		return "", err
+		return plumbing.ZeroHash, fmt.Errorf("resolve tag %s: %w", tag, err)
 	}
-	return string(out), nil
+	if obj, err := repo.TagObject(ref.Hash()); err == nil {
+		return obj.Target, nil
+	}
+	return ref.Hash(), nil
+}
+
+// splitCommitMessage separates a commit message into its subject (first
+// non-empty line) and body (the rest, with surrounding whitespace trimmed).
+func splitCommitMessage(msg string) (subject, body string) {
+	msg = strings.TrimLeft(msg, "\n")
+	if i := strings.IndexByte(msg, '\n'); i >= 0 {
+		subject = strings.TrimRight(msg[:i], "\r")
+		body = strings.TrimSpace(msg[i+1:])
+		return
+	}
+	subject = strings.TrimSpace(msg)
+	return
 }
