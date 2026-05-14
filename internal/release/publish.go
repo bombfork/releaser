@@ -1,6 +1,7 @@
 package release
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,6 +42,13 @@ type PublishInputs struct {
 	// Useful for advanced local workflows; in CI the checks pass
 	// naturally and Force should be left false.
 	Force bool
+
+	// DryRun runs the read-only steps (Fetch, GetRepo, ReadVersion,
+	// LatestVersionTag, GetReleaseByTag, ListReleaseAssets, BuildPlan)
+	// and prints a description of what the real run would do, but
+	// performs no release creation, runs no build, and uploads no
+	// assets. Safety-check failures become warnings in this mode.
+	DryRun bool
 }
 
 // Publish performs the side-effecting half of a release. It reads the
@@ -83,13 +91,28 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 		return fmt.Errorf("fetch origin: %w", err)
 	}
 
+	out := in.Stdout
+	if out == nil {
+		out = io.Discard
+	}
+
 	if !in.Force {
 		if err := RequireCleanWorktree(repoRoot); err != nil {
-			return err
+			if !in.DryRun {
+				return err
+			}
+			if _, werr := fmt.Fprintf(out, "Warning: %v\n\n", err); werr != nil {
+				return werr
+			}
 		}
 		originDefaultRef := "refs/remotes/origin/" + defaultBranch
 		if err := RequireSyncedWithRemote(repoRoot, originDefaultRef); err != nil {
-			return err
+			if !in.DryRun {
+				return err
+			}
+			if _, werr := fmt.Fprintf(out, "Warning: %v\n\n", err); werr != nil {
+				return werr
+			}
 		}
 	}
 
@@ -112,11 +135,20 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 			return fmt.Errorf("parse latest tag %q: %w", latestTag, err)
 		}
 		if !current.Greater(latest) {
+			if in.DryRun {
+				if _, werr := fmt.Fprintf(out, "Current version %s is not newer than the latest tag %s; publish would be a no-op.\n", current, latestTag); werr != nil {
+					return werr
+				}
+			}
 			return nil
 		}
 	}
 
 	tag := "v" + current.String()
+
+	if in.DryRun {
+		return describePublishPlan(ctx, out, in, repoRoot, owner, repoName, tag, current, latestTag)
+	}
 
 	releaseID, err := ensureRelease(ctx, repoRoot, in, owner, repoName, tag, current)
 	if err != nil {
@@ -141,6 +173,69 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 		if _, err := in.GitHubClient.UploadReleaseAsset(ctx, owner, repoName, releaseID, name, path); err != nil {
 			return fmt.Errorf("upload asset %s: %w", name, err)
 		}
+	}
+	return nil
+}
+
+// describePublishPlan prints what Publish would do, without running the
+// build, creating a release, or uploading any assets. Read-only API
+// calls (GetReleaseByTag, ListReleaseAssets) still hit the live service
+// so the dry-run reflects current remote state. Output is accumulated
+// in a buffer and written to out in a single Write.
+func describePublishPlan(ctx context.Context, out io.Writer, in PublishInputs, repoRoot, owner, repoName, tag string, current Semver, latestTag string) error {
+	var buf bytes.Buffer
+	fmt.Fprintln(&buf, "Publish actions (dry run)")
+	fmt.Fprintln(&buf, "-------------------------")
+	if latestTag == "" {
+		fmt.Fprintln(&buf, "Latest tag: (none — this would be the initial release)")
+	} else {
+		fmt.Fprintf(&buf, "Latest tag: %s\n", latestTag)
+	}
+	fmt.Fprintf(&buf, "Current version: %s\n", current)
+	fmt.Fprintf(&buf, "Tag to publish: %s\n", tag)
+
+	headSHA, err := headCommitSHA(repoRoot)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(&buf, "Target commit:  %s\n", headSHA)
+	fmt.Fprintln(&buf)
+
+	existing, err := in.GitHubClient.GetReleaseByTag(ctx, owner, repoName, tag)
+	switch {
+	case errors.Is(err, github.ErrNotFound):
+		plan, err := BuildPlan(repoRoot, in.Config, in.Adapter)
+		if err != nil {
+			return fmt.Errorf("build release plan: %w", err)
+		}
+		plan.Commits = excludeReleasePrepareCommits(plan.Commits)
+		notes := FormatReleaseNotes(plan)
+		fmt.Fprintf(&buf, "Would create release %q with notes:\n", tag)
+		for _, line := range strings.Split(notes, "\n") {
+			fmt.Fprintln(&buf, "  "+line)
+		}
+	case err != nil:
+		return fmt.Errorf("look up release %s: %w", tag, err)
+	default:
+		fmt.Fprintf(&buf, "Release %s already exists (id: %d); creation step would be skipped.\n", tag, existing.ID)
+		attached, err := listAttachedAssetNames(ctx, in.GitHubClient, owner, repoName, existing.ID)
+		if err != nil {
+			return err
+		}
+		if len(attached) == 0 {
+			fmt.Fprintln(&buf, "Currently attached assets: (none)")
+		} else {
+			fmt.Fprintln(&buf, "Currently attached assets:")
+			for name := range attached {
+				fmt.Fprintf(&buf, "  - %s\n", name)
+			}
+		}
+	}
+	fmt.Fprintln(&buf)
+	fmt.Fprintf(&buf, "Would run build: %s\n", in.Config.Build.Command)
+	fmt.Fprintf(&buf, "Would attach artifacts matching: %s (skipping any already attached)\n", in.Config.Build.Artifacts)
+	if _, err := out.Write(buf.Bytes()); err != nil {
+		return fmt.Errorf("write dry-run output: %w", err)
 	}
 	return nil
 }

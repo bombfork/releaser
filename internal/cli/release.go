@@ -63,7 +63,7 @@ func runReleaseDryRun(cmd *cobra.Command, repoRoot string) error {
 }
 
 func newReleasePrepareCommand() *cobra.Command {
-	var force bool
+	var force, dryRun bool
 	cmd := &cobra.Command{
 		Use:   "prepare",
 		Short: "Maintain the pending-release pull request",
@@ -77,20 +77,25 @@ equivalent end state. When no commits since the latest release warrant
 a version bump, prepare exits cleanly with no side effects.
 
 The worktree-clean check protects against silently discarding
-uncommitted changes during the branch reset. Use --force to override.`,
+uncommitted changes during the branch reset. Use --force to override.
+
+With --dry-run, runs only the read-only steps (Fetch, GetRepo,
+BuildPlan, GetPRByHead) and prints a description of what the real run
+would do; safety-check failures become warnings rather than errors.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := cmd.Flags().GetString(RepoRootFlag)
 			if err != nil {
 				return err
 			}
-			return runReleasePrepare(cmd, repoRoot, force)
+			return runReleasePrepare(cmd, repoRoot, force, dryRun)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "Skip worktree-clean safety checks")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what prepare would do without making any changes")
 	return cmd
 }
 
-func runReleasePrepare(cmd *cobra.Command, repoRoot string, force bool) error {
+func runReleasePrepare(cmd *cobra.Command, repoRoot string, force, dryRun bool) error {
 	cfg, ad, err := loadConfigAndAdapter(repoRoot)
 	if err != nil {
 		return err
@@ -109,11 +114,13 @@ func runReleasePrepare(cmd *cobra.Command, repoRoot string, force bool) error {
 		GitHubClient:  ghClient,
 		TokenProvider: tp,
 		Force:         force,
+		DryRun:        dryRun,
+		Stdout:        cmd.OutOrStdout(),
 	})
 }
 
 func newReleasePublishCommand() *cobra.Command {
-	var force bool
+	var force, dryRun bool
 	cmd := &cobra.Command{
 		Use:   "publish",
 		Short: "Publish the release for the current version",
@@ -129,20 +136,26 @@ publish exits cleanly with no side effects.
 
 Two safety checks run before any side effects: the worktree must be
 clean (no uncommitted changes), and the local HEAD must match the
-freshly-fetched origin/<default-branch>. Use --force to skip both.`,
+freshly-fetched origin/<default-branch>. Use --force to skip both.
+
+With --dry-run, runs only the read-only steps (Fetch, GetRepo,
+ReadVersion, GetReleaseByTag, ListReleaseAssets) and prints a
+description of what the real run would do. The build is NOT executed
+in dry-run mode; safety-check failures become warnings.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := cmd.Flags().GetString(RepoRootFlag)
 			if err != nil {
 				return err
 			}
-			return runReleasePublish(cmd, repoRoot, force)
+			return runReleasePublish(cmd, repoRoot, force, dryRun)
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "Skip worktree-clean and remote-sync safety checks")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what publish would do without making any changes")
 	return cmd
 }
 
-func runReleasePublish(cmd *cobra.Command, repoRoot string, force bool) error {
+func runReleasePublish(cmd *cobra.Command, repoRoot string, force, dryRun bool) error {
 	cfg, ad, err := loadConfigAndAdapter(repoRoot)
 	if err != nil {
 		return err
@@ -163,6 +176,7 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string, force bool) error {
 		Stdout:        cmd.OutOrStdout(),
 		Stderr:        cmd.ErrOrStderr(),
 		Force:         force,
+		DryRun:        dryRun,
 	})
 }
 
