@@ -5,6 +5,11 @@ package generic
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/bombfork/releaser/internal/adapter"
 	"github.com/bombfork/releaser/internal/config"
@@ -46,8 +51,38 @@ func (*Adapter) WorkflowSnippets(_ config.Config) adapter.Snippets {
 	return adapter.Snippets{}
 }
 
-// ReadVersion will read the version from the first configured location.
-// Implementation deferred until the release engine lands.
-func (*Adapter) ReadVersion(_ string, _ config.Config) (string, error) {
-	return "", errors.New("generic.ReadVersion: not implemented")
+// ReadVersion returns the current project version, taken from the first
+// configured version.locations entry. The regex is run in multiline mode
+// (`(?m)` is prepended if the regex does not already begin with an
+// inline flag group), so `^` and `$` match line boundaries by default.
+// The returned value is the trimmed contents of the first capture group;
+// surrounding whitespace is stripped but the value is otherwise returned
+// verbatim (a leading "v" is preserved if the user's regex captures it).
+func (*Adapter) ReadVersion(repoRoot string, cfg config.Config) (string, error) {
+	if len(cfg.Version.Locations) == 0 {
+		return "", errors.New("no version.locations configured")
+	}
+	loc := cfg.Version.Locations[0]
+	pattern := loc.Regex
+	if !strings.HasPrefix(pattern, "(?") {
+		pattern = "(?m)" + pattern
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("compile regex: %w", err)
+	}
+	if re.NumSubexp() != 1 {
+		return "", fmt.Errorf("regex must contain exactly one capture group, got %d", re.NumSubexp())
+	}
+	absPath := filepath.Join(repoRoot, loc.Path)
+	// #nosec G304 -- absPath joins caller-supplied repoRoot with a configured location path.
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", loc.Path, err)
+	}
+	m := re.FindSubmatch(data)
+	if m == nil {
+		return "", fmt.Errorf("regex did not match in %s", loc.Path)
+	}
+	return strings.TrimSpace(string(m[1])), nil
 }
