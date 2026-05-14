@@ -5,13 +5,22 @@
 # open PR carrying the draft release notes and the version-file bumps.
 #
 # When the PR is merged, the publish workflow takes over.
+#
+# Triggered automatically on every push to the default branch, and
+# manually via workflow_dispatch (with optional dry-run).
 
 name: releaser pending release
 
 on:
   push:
     branches:
-      - main
+      - << .DefaultBranch >>
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run without side effects (no commits, no branch push, no PR ops)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -30,5 +39,5 @@ jobs:
       - name: Maintain pending-release pull request
         uses: bombfork/releaser@<< .ActionRef >>
         with:
-          command: release prepare
+          command: release prepare ${{ inputs.dry_run && '--dry-run' || '' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

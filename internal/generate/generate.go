@@ -35,14 +35,16 @@ type Inputs struct {
 // File names come from in.Config.Workflows (with defaults filled in).
 func Generate(repoRoot string, in Inputs) error {
 	workflows := in.Config.Workflows.WithDefaults()
+	release := in.Config.Release.WithDefaults()
 	dir := filepath.Join(repoRoot, ".github", "workflows")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
 	snippets := in.Adapter.WorkflowSnippets(in.Config)
 	data := templateData{
-		ActionRef:  in.ActionRef,
-		SetupSteps: snippets.SetupSteps,
+		ActionRef:     in.ActionRef,
+		DefaultBranch: release.DefaultBranch,
+		SetupSteps:    snippets.SetupSteps,
 	}
 	if err := renderTo(filepath.Join(dir, workflows.PendingReleaseFile), "pending-release.yml.tmpl", data); err != nil {
 		return err
@@ -54,8 +56,9 @@ func Generate(repoRoot string, in Inputs) error {
 }
 
 type templateData struct {
-	ActionRef  string
-	SetupSteps []string
+	ActionRef     string
+	DefaultBranch string
+	SetupSteps    []string
 }
 
 func renderTo(dest, name string, data templateData) error {

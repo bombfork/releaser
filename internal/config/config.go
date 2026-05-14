@@ -85,6 +85,13 @@ type Release struct {
 	// opened from. Defaults to "releaser/pending-release".
 	BranchName string `yaml:"branch_name,omitempty"`
 
+	// DefaultBranch is the name of the project's default branch (e.g.
+	// "main", "trunk"). It is used by `releaser generate` to set the
+	// trigger branches on the generated workflows. At runtime, the
+	// release prepare command queries the GitHub API for the actual
+	// default branch and uses that instead.
+	DefaultBranch string `yaml:"default_branch,omitempty"`
+
 	// BotIdentity is the git author/committer used for the version-bump
 	// commit when running in CI (GITHUB_ACTIONS=true). When running
 	// locally, the user's git config is used instead and this field is
@@ -101,10 +108,12 @@ type BotIdentity struct {
 }
 
 // DefaultRelease returns the default Release configuration: the standard
-// pending-release branch name and the GitHub Actions bot identity.
+// pending-release branch name, "main" as the default branch, and the
+// GitHub Actions bot identity.
 func DefaultRelease() Release {
 	return Release{
-		BranchName: "releaser/pending-release",
+		BranchName:    "releaser/pending-release",
+		DefaultBranch: "main",
 		BotIdentity: BotIdentity{
 			Name:  "github-actions[bot]",
 			Email: "41898282+github-actions[bot]@users.noreply.github.com",
@@ -117,6 +126,9 @@ func (r Release) WithDefaults() Release {
 	d := DefaultRelease()
 	if r.BranchName == "" {
 		r.BranchName = d.BranchName
+	}
+	if r.DefaultBranch == "" {
+		r.DefaultBranch = d.DefaultBranch
 	}
 	if r.BotIdentity.Name == "" {
 		r.BotIdentity.Name = d.BotIdentity.Name

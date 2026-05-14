@@ -11,6 +11,9 @@ func TestDefaultRelease(t *testing.T) {
 	if d.BranchName != "releaser/pending-release" {
 		t.Errorf("BranchName = %q", d.BranchName)
 	}
+	if d.DefaultBranch != "main" {
+		t.Errorf("DefaultBranch = %q", d.DefaultBranch)
+	}
 	if d.BotIdentity.Name != "github-actions[bot]" {
 		t.Errorf("BotIdentity.Name = %q", d.BotIdentity.Name)
 	}
@@ -47,7 +50,16 @@ func TestRelease_WithDefaults(t *testing.T) {
 	if got.BranchName != "release/next" {
 		t.Errorf("BranchName = %q", got.BranchName)
 	}
+	if got.DefaultBranch != "main" {
+		t.Errorf("DefaultBranch = %q, want default", got.DefaultBranch)
+	}
 	if got.BotIdentity.Name != "github-actions[bot]" {
 		t.Errorf("BotIdentity.Name = %q, want default", got.BotIdentity.Name)
+	}
+
+	// DefaultBranch override.
+	got = config.Release{DefaultBranch: "trunk"}.WithDefaults()
+	if got.DefaultBranch != "trunk" {
+		t.Errorf("DefaultBranch = %q, want trunk", got.DefaultBranch)
 	}
 }
