@@ -11,8 +11,6 @@ import (
 // `releaser config get <key>` reads the configuration file and prints the
 // value at the given dotted key path.
 func TestConfig_GetReturnsValueFromConfigFile(t *testing.T) {
-	t.Skip("target: requires `releaser config get` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), validConfig)
 
@@ -28,8 +26,6 @@ func TestConfig_GetReturnsValueFromConfigFile(t *testing.T) {
 // `releaser config set <key> <value>` writes the value back to the
 // configuration file; a subsequent `get` returns the new value.
 func TestConfig_SetThenGetRoundTrip(t *testing.T) {
-	t.Skip("target: requires `releaser config set` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), validConfig)
 
@@ -49,8 +45,6 @@ func TestConfig_SetThenGetRoundTrip(t *testing.T) {
 // `config get` must fail when asked for a key that does not exist in the
 // schema (typo protection).
 func TestConfig_GetUnknownKeyFails(t *testing.T) {
-	t.Skip("target: requires `releaser config get` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), validConfig)
 
@@ -64,8 +58,6 @@ func TestConfig_GetUnknownKeyFails(t *testing.T) {
 // state the adapter rejects (e.g. emptying build.command for the generic
 // adapter). The on-disk file must not be left in a broken state.
 func TestConfig_SetRejectsInvalidValue(t *testing.T) {
-	t.Skip("target: requires `releaser config set` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	cfgPath := filepath.Join(repo, config.DefaultFilePath)
 	writeFile(t, cfgPath, validConfig)
