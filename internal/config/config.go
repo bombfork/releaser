@@ -39,6 +39,11 @@ type Config struct {
 	// Workflows configures the names of the workflow files written by
 	// `releaser generate`. Unset fields fall back to DefaultWorkflows().
 	Workflows Workflows `yaml:"workflows,omitempty"`
+
+	// Release configures the side-effecting half of the release process:
+	// the pending-release branch name and the bot identity used for
+	// CI-driven commits. Unset fields fall back to DefaultRelease().
+	Release Release `yaml:"release,omitempty"`
 }
 
 // Workflows holds the names of the workflow files produced by `generate`.
@@ -72,6 +77,54 @@ func (w Workflows) WithDefaults() Workflows {
 		w.PublishFile = d.PublishFile
 	}
 	return w
+}
+
+// Release configures the side-effecting half of the release process.
+type Release struct {
+	// BranchName is the head branch the pending-release pull request is
+	// opened from. Defaults to "releaser/pending-release".
+	BranchName string `yaml:"branch_name,omitempty"`
+
+	// BotIdentity is the git author/committer used for the version-bump
+	// commit when running in CI (GITHUB_ACTIONS=true). When running
+	// locally, the user's git config is used instead and this field is
+	// ignored.
+	BotIdentity BotIdentity `yaml:"bot_identity,omitempty"`
+}
+
+// BotIdentity is the git author/committer used for releaser-driven
+// commits in CI mode. Defaults to the standard GitHub Actions bot, which
+// works out of the box for users relying on the built-in GITHUB_TOKEN.
+type BotIdentity struct {
+	Name  string `yaml:"name,omitempty"`
+	Email string `yaml:"email,omitempty"`
+}
+
+// DefaultRelease returns the default Release configuration: the standard
+// pending-release branch name and the GitHub Actions bot identity.
+func DefaultRelease() Release {
+	return Release{
+		BranchName: "releaser/pending-release",
+		BotIdentity: BotIdentity{
+			Name:  "github-actions[bot]",
+			Email: "41898282+github-actions[bot]@users.noreply.github.com",
+		},
+	}
+}
+
+// WithDefaults returns r with any unset fields filled in from DefaultRelease.
+func (r Release) WithDefaults() Release {
+	d := DefaultRelease()
+	if r.BranchName == "" {
+		r.BranchName = d.BranchName
+	}
+	if r.BotIdentity.Name == "" {
+		r.BotIdentity.Name = d.BotIdentity.Name
+	}
+	if r.BotIdentity.Email == "" {
+		r.BotIdentity.Email = d.BotIdentity.Email
+	}
+	return r
 }
 
 // Build describes how to produce release artifacts and which files to attach.
