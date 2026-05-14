@@ -195,6 +195,41 @@ func TestCreatePR_Happy(t *testing.T) {
 	}
 }
 
+func TestGetRepo_ReturnsDefaultBranch(t *testing.T) {
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatch(
+			mock.GetReposByOwnerByRepo,
+			gh.Repository{
+				DefaultBranch: gh.Ptr("trunk"),
+			},
+		),
+	)
+	c := releasergh.NewClient(httpClient)
+	r, err := c.GetRepo(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("GetRepo: %v", err)
+	}
+	if r.DefaultBranch != "trunk" {
+		t.Errorf("DefaultBranch = %q, want %q", r.DefaultBranch, "trunk")
+	}
+}
+
+func TestGetRepo_NotFoundReturnsSentinel(t *testing.T) {
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatchHandler(
+			mock.GetReposByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mock.WriteError(w, http.StatusNotFound, "not found")
+			}),
+		),
+	)
+	c := releasergh.NewClient(httpClient)
+	_, err := c.GetRepo(context.Background(), "owner", "repo")
+	if !errors.Is(err, releasergh.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
 func TestUpdatePR_TitleAndBody(t *testing.T) {
 	httpClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatch(

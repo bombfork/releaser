@@ -54,3 +54,10 @@ type PRUpdate struct {
 	Title *string
 	Body  *string
 }
+
+// Repo is the subset of a GitHub repository the releaser cares about.
+// In v1 only the default branch is consumed; more fields can be added
+// as future features need them.
+type Repo struct {
+	DefaultBranch string
+}

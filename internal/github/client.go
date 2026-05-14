@@ -45,6 +45,21 @@ func NewClientFromTokenProvider(tp TokenProvider) (*Client, error) {
 	return NewClientFromToken(token), nil
 }
 
+// --- Repository -------------------------------------------------------
+
+// GetRepo returns the narrow subset of repository metadata the releaser
+// uses (currently: the default branch).
+func (c *Client) GetRepo(ctx context.Context, owner, repo string) (*Repo, error) {
+	r, _, err := c.gh.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		if is404(err) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get repo %s/%s: %w", owner, repo, err)
+	}
+	return &Repo{DefaultBranch: r.GetDefaultBranch()}, nil
+}
+
 // --- Releases ---------------------------------------------------------
 
 // GetReleaseByTag returns the release attached to the given tag, or
