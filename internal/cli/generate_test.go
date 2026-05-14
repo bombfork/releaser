@@ -11,8 +11,6 @@ import (
 // With no workflow names configured, `releaser generate` writes the two
 // workflow files at their default names under .github/workflows/.
 func TestGenerate_WritesDefaultWorkflowFiles(t *testing.T) {
-	t.Skip("target: requires `releaser generate` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), validConfig)
 
@@ -33,8 +31,6 @@ func TestGenerate_WritesDefaultWorkflowFiles(t *testing.T) {
 // When workflow names are configured, the generated files must be written
 // at those configured names, not the defaults.
 func TestGenerate_HonorsConfiguredWorkflowNames(t *testing.T) {
-	t.Skip("target: requires `releaser generate` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	cfg := validConfig + `workflows:
   pending_release_file: prep.yml
@@ -66,8 +62,6 @@ func TestGenerate_HonorsConfiguredWorkflowNames(t *testing.T) {
 
 // `releaser generate` must fail when no configuration file exists.
 func TestGenerate_FailsWhenConfigMissing(t *testing.T) {
-	t.Skip("target: requires `releaser generate` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	r := runCLI(t, "generate", "--repo-root", repo)
 	if r.err == nil {
