@@ -22,9 +22,13 @@ runs:
       id: version
       shell: bash
       run: |
-        ref="${{ github.action_ref }}"
+        # github.action_ref is unreliable inside composite actions and
+        # shows as empty in some runner contexts. github.action_path is
+        # the directory the action was checked out into, ending in the
+        # ref it was called with — basename gives us the version.
+        ref="$(basename "${{ github.action_path }}")"
         if [[ -z "${ref}" ]]; then
-          echo "action ref is empty; cannot determine binary version" >&2
+          echo "could not resolve action version from github.action_path" >&2
           exit 1
         fi
         echo "version=${ref}" >> "${GITHUB_OUTPUT}"
