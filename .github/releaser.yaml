@@ -1,0 +1,10 @@
+adapter: generic
+build:
+    command: GORELEASER_CURRENT_TAG="$RELEASER_TAG" goreleaser release --skip=publish --clean
+    artifacts: dist/releaser_*.tar.gz
+version:
+    locations:
+        - path: internal/cli/root.go
+          regex: ^var Version = "(.*)"$
+release:
+    default_branch: main
