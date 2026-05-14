@@ -14,8 +14,6 @@ import (
 // at .github/releaser.yaml with the values supplied by the preset, after
 // validating them against the chosen adapter.
 func TestInit_FromPresetWritesConfigAtDefaultPath(t *testing.T) {
-	t.Skip("target: requires `releaser init` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	preset := filepath.Join(repo, "preset.yaml")
 	writeFile(t, preset, validConfig)
@@ -56,8 +54,6 @@ func TestInit_FromPresetWritesConfigAtDefaultPath(t *testing.T) {
 // init must not overwrite a pre-existing configuration. The user has to
 // remove or migrate the file deliberately.
 func TestInit_RefusesToClobberExistingConfig(t *testing.T) {
-	t.Skip("target: requires `releaser init` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	existing := filepath.Join(repo, config.DefaultFilePath)
 	writeFile(t, existing, "adapter: generic\n# pre-existing\n")
@@ -82,8 +78,6 @@ func TestInit_RefusesToClobberExistingConfig(t *testing.T) {
 // init must reject a preset that does not satisfy the chosen adapter's
 // validation rules, and must not leave a partial file behind.
 func TestInit_RejectsPresetFailingAdapterValidation(t *testing.T) {
-	t.Skip("target: requires `releaser init` implementation (see bombfork/releaser#1)")
-
 	repo := t.TempDir()
 	preset := filepath.Join(repo, "preset.yaml")
 	// generic adapter requires build.command and version.locations.
