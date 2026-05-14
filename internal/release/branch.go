@@ -14,7 +14,9 @@ import (
 )
 
 // Fetch performs a fetch from remoteURL using the local origin remote
-// name and the given auth. All branches and tags are fetched.
+// name and the given auth. Both branches and tags are pulled (the tag
+// refspec is needed by Publish so the just-created GitHub tag becomes
+// locally visible before the build command runs).
 // Force is enabled so out-of-date local refs get overwritten.
 // A "already up-to-date" condition is treated as success.
 func Fetch(repoRoot, remoteURL string, auth transport.AuthMethod) error {
@@ -29,6 +31,7 @@ func Fetch(repoRoot, remoteURL string, auth transport.AuthMethod) error {
 		Force:      true,
 		RefSpecs: []gitconfig.RefSpec{
 			"+refs/heads/*:refs/remotes/origin/*",
+			"+refs/tags/*:refs/tags/*",
 		},
 	})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {

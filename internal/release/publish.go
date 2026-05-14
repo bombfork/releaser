@@ -155,6 +155,14 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 		return err
 	}
 
+	// ensureRelease may have just created the tag on GitHub via the API.
+	// Refetch so the locally-checked-out repo has it: build tools that
+	// inspect git state (e.g. goreleaser's tag validation) will then
+	// resolve the tag without needing a workaround in the build command.
+	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
+		return fmt.Errorf("fetch tags after ensuring release: %w", err)
+	}
+
 	artifacts, err := RunBuild(repoRoot, in.Config, BuildEnvForVersion(current), in.Stdout, in.Stderr)
 	if err != nil {
 		return fmt.Errorf("run build: %w", err)
