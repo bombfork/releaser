@@ -1,6 +1,7 @@
 [tools]
 go = "latest"
 golangci-lint = "latest"
+goreleaser = "latest"
 gotestsum = "latest"
 
 [tasks.build]
@@ -30,3 +31,7 @@ run = 'go test -coverprofile=coverage.out ./... >/dev/null 2>&1; go tool cover -
 [tasks.check]
 description = "run format, lint, build, test"
 depends = ["format", "lint", "build", "test"]
+
+[tasks.package]
+description = "build cross-platform release archives under dist/ (no release creation)"
+run = "goreleaser release --snapshot --skip=publish --clean"

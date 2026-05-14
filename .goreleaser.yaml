@@ -1,0 +1,59 @@
+version: 2
+
+project_name: releaser
+
+# Releases are created by releaser itself once dogfooded; GoReleaser is
+# used only to produce the cross-compiled archives that releaser uploads
+# as assets.
+release:
+  disable: true
+
+# Changelog generation is owned by releaser (FormatReleaseNotes); we
+# don't want a parallel one from GoReleaser polluting the release body.
+changelog:
+  disable: true
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: releaser
+    main: ./cmd
+    binary: releaser
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # go-git/v5 ssh support is unreliable on windows/arm64; the
+      # runners are rare anyway. Drop the target.
+      - goos: windows
+        goarch: arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/bombfork/releaser/internal/cli.Version={{ .Version }}
+
+archives:
+  - id: releaser
+    # Matches the download URL in action.yml:
+    #   releases/download/<tag>/releaser_<os>_<arch>.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"

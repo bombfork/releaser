@@ -18,5 +18,8 @@ go.work.sum
 # Local build artifact
 /releaser
 
+# GoReleaser output
+/dist/
+
 # Claude dotfolder
 .claude/
