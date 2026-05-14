@@ -20,42 +20,47 @@ import (
 	"github.com/bombfork/releaser/internal/release"
 )
 
-// initPublishFixture sets up a local repo simulating the state right
-// after a release-prep PR has been merged: previous tag v0.1.0, a feat
-// commit, then a "chore(release): prepare v0.2.0" bump commit on top.
-// Returns the repo path and the expected current version.
-func initPublishFixture(t *testing.T) string {
+// initPublishFixture sets up a working repo + bare upstream simulating
+// the state right after a release-prep PR has been merged: previous tag
+// v0.1.0, a feat commit, then a "chore(release): prepare v0.2.0" bump
+// commit on top. Origin points at the bare upstream and all refs are
+// pushed. Returns (upstreamPath, localPath).
+func initPublishFixture(t *testing.T) (upstream, local string) {
 	t.Helper()
-	repo := t.TempDir()
-	run := func(args ...string) {
+	upstream = t.TempDir()
+	local = t.TempDir()
+	runIn := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	run("init", "-q", "-b", "main")
-	run("config", "user.email", "test@example.com")
-	run("config", "user.name", "test")
-	run("config", "commit.gpgsign", "false")
+	runIn(upstream, "init", "-q", "--bare", "-b", "main")
+	runIn(local, "init", "-q", "-b", "main")
+	runIn(local, "config", "user.email", "test@example.com")
+	runIn(local, "config", "user.name", "test")
+	runIn(local, "config", "commit.gpgsign", "false")
+	runIn(local, "remote", "add", "origin", upstream)
 
-	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("VERSION := 0.1.0\nall:\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(local, "Makefile"), []byte("VERSION := 0.1.0\nall:\n"), 0o644); err != nil {
 		t.Fatalf("write Makefile: %v", err)
 	}
-	run("add", "Makefile")
-	run("commit", "-q", "-m", "chore: initial")
-	run("tag", "-a", "v0.1.0", "-m", "v0.1.0")
+	runIn(local, "add", "Makefile")
+	runIn(local, "commit", "-q", "-m", "chore: initial")
+	runIn(local, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
 
-	// Real feature commit.
-	run("commit", "--allow-empty", "-q", "-m", "feat: shiny new thing")
+	runIn(local, "commit", "--allow-empty", "-q", "-m", "feat: shiny new thing")
 
-	// Simulate the bump commit produced by `release prepare`.
-	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("VERSION := 0.2.0\nall:\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(local, "Makefile"), []byte("VERSION := 0.2.0\nall:\n"), 0o644); err != nil {
 		t.Fatalf("write bumped Makefile: %v", err)
 	}
-	run("add", "Makefile")
-	run("commit", "-q", "-m", "chore(release): prepare v0.2.0")
-	return repo
+	runIn(local, "add", "Makefile")
+	runIn(local, "commit", "-q", "-m", "chore(release): prepare v0.2.0")
+
+	runIn(local, "push", "-q", "origin", "main")
+	runIn(local, "push", "-q", "origin", "v0.1.0")
+	return upstream, local
 }
 
 func publishCfg() config.Config {
@@ -94,6 +99,14 @@ func buildPublishMock(t *testing.T, b publishMockBehavior) (*http.Client, *publi
 	t.Helper()
 	var c publishCounters
 	opts := []mock.MockBackendOption{
+		mock.WithRequestMatchHandler(
+			mock.GetReposByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Repository{
+					DefaultBranch: gh.Ptr("main"),
+				})
+			}),
+		),
 		mock.WithRequestMatchHandler(
 			mock.GetReposReleasesTagsByOwnerByRepoByTag,
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -140,7 +153,7 @@ func buildPublishMock(t *testing.T, b publishMockBehavior) (*http.Client, *publi
 	return mock.NewMockedHTTPClient(opts...), &c
 }
 
-func runPublish(t *testing.T, repo string, cfg config.Config, httpClient *http.Client) error {
+func runPublish(t *testing.T, repo, upstream string, cfg config.Config, httpClient *http.Client) error {
 	t.Helper()
 	ghClient := releasergh.NewClient(httpClient)
 	tp := &fakeTokenProvider{token: "ghs_test"}
@@ -151,12 +164,13 @@ func runPublish(t *testing.T, repo string, cfg config.Config, httpClient *http.C
 		TokenProvider: tp,
 		Stdout:        io.Discard,
 		Stderr:        io.Discard,
+		RemoteURL:     upstream,
 	})
 }
 
 func TestPublish_HappyPathCreatesReleaseAndUploadsAllAssets(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
-	repo := initPublishFixture(t)
+	upstream, repo := initPublishFixture(t)
 
 	httpClient, c := buildPublishMock(t, publishMockBehavior{
 		getReleaseResponse: func(w http.ResponseWriter) {
@@ -167,7 +181,7 @@ func TestPublish_HappyPathCreatesReleaseAndUploadsAllAssets(t *testing.T) {
 		},
 	})
 
-	if err := runPublish(t, repo, publishCfg(), httpClient); err != nil {
+	if err := runPublish(t, repo, upstream, publishCfg(), httpClient); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -181,7 +195,7 @@ func TestPublish_HappyPathCreatesReleaseAndUploadsAllAssets(t *testing.T) {
 
 func TestPublish_AllAssetsAttachedIsNoOpUpload(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
-	repo := initPublishFixture(t)
+	upstream, repo := initPublishFixture(t)
 
 	httpClient, c := buildPublishMock(t, publishMockBehavior{
 		getReleaseResponse: func(w http.ResponseWriter) {
@@ -198,7 +212,7 @@ func TestPublish_AllAssetsAttachedIsNoOpUpload(t *testing.T) {
 		},
 	})
 
-	if err := runPublish(t, repo, publishCfg(), httpClient); err != nil {
+	if err := runPublish(t, repo, upstream, publishCfg(), httpClient); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -212,7 +226,7 @@ func TestPublish_AllAssetsAttachedIsNoOpUpload(t *testing.T) {
 
 func TestPublish_ReleaseExistsButNoAssetsUploadsAll(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
-	repo := initPublishFixture(t)
+	upstream, repo := initPublishFixture(t)
 
 	httpClient, c := buildPublishMock(t, publishMockBehavior{
 		getReleaseResponse: func(w http.ResponseWriter) {
@@ -226,7 +240,7 @@ func TestPublish_ReleaseExistsButNoAssetsUploadsAll(t *testing.T) {
 		},
 	})
 
-	if err := runPublish(t, repo, publishCfg(), httpClient); err != nil {
+	if err := runPublish(t, repo, upstream, publishCfg(), httpClient); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 
@@ -240,26 +254,31 @@ func TestPublish_ReleaseExistsButNoAssetsUploadsAll(t *testing.T) {
 
 func TestPublish_CurrentMatchesLatestTagIsNoop(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+	upstream := t.TempDir()
 	repo := t.TempDir()
-	run := func(args ...string) {
+	runIn := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	run("init", "-q", "-b", "main")
-	run("config", "user.email", "t@example.com")
-	run("config", "user.name", "t")
-	run("config", "commit.gpgsign", "false")
+	runIn(upstream, "init", "-q", "--bare", "-b", "main")
+	runIn(repo, "init", "-q", "-b", "main")
+	runIn(repo, "config", "user.email", "t@example.com")
+	runIn(repo, "config", "user.name", "t")
+	runIn(repo, "config", "commit.gpgsign", "false")
+	runIn(repo, "remote", "add", "origin", upstream)
 
 	// Makefile already at 0.1.0, tag v0.1.0 — current == latest.
 	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("VERSION := 0.1.0\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	run("add", "Makefile")
-	run("commit", "-q", "-m", "chore: initial")
-	run("tag", "-a", "v0.1.0", "-m", "v0.1.0")
+	runIn(repo, "add", "Makefile")
+	runIn(repo, "commit", "-q", "-m", "chore: initial")
+	runIn(repo, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
+	runIn(repo, "push", "-q", "origin", "main")
+	runIn(repo, "push", "-q", "origin", "v0.1.0")
 
 	httpClient, c := buildPublishMock(t, publishMockBehavior{
 		getReleaseResponse: func(w http.ResponseWriter) {
@@ -271,7 +290,7 @@ func TestPublish_CurrentMatchesLatestTagIsNoop(t *testing.T) {
 		},
 	})
 
-	if err := runPublish(t, repo, publishCfg(), httpClient); err != nil {
+	if err := runPublish(t, repo, upstream, publishCfg(), httpClient); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 

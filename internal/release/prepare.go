@@ -30,6 +30,11 @@ type PrepareInputs struct {
 	// inject a local RemoteURL set this to nil explicitly (no auth
 	// needed for a file path).
 	Auth transport.AuthMethod
+
+	// Force skips the worktree-clean safety check. The branch reset
+	// uses Force:true unconditionally, so a dirty worktree would
+	// otherwise silently discard uncommitted changes.
+	Force bool
 }
 
 // Prepare maintains the pending-release pull request: it builds the
@@ -94,6 +99,12 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 	}
 	if !plan.ReleaseWarranted {
 		return nil
+	}
+
+	if !in.Force {
+		if err := RequireCleanWorktree(repoRoot); err != nil {
+			return err
+		}
 	}
 
 	release := in.Config.Release.WithDefaults()

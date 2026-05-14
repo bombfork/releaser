@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/transport"
 
 	"github.com/bombfork/releaser/internal/adapter"
 	"github.com/bombfork/releaser/internal/config"
@@ -26,6 +27,20 @@ type PublishInputs struct {
 	// CLI callers pass cobra's Out/Err writers; tests pass io.Discard.
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// RemoteURL overrides the URL used by Fetch. When empty, defaults
+	// to the standard GitHub HTTPS URL for the detected owner/repo.
+	// Tests inject a local bare-repo path here.
+	RemoteURL string
+
+	// Auth overrides the auth method used by Fetch. When nil and
+	// RemoteURL is empty, defaults to TokenAuth from TokenProvider.
+	Auth transport.AuthMethod
+
+	// Force skips the worktree-clean and remote-sync safety checks.
+	// Useful for advanced local workflows; in CI the checks pass
+	// naturally and Force should be left false.
+	Force bool
 }
 
 // Publish performs the side-effecting half of a release. It reads the
@@ -44,6 +59,38 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 	owner, repoName, err := DetectRepoSlug(repoRoot)
 	if err != nil {
 		return fmt.Errorf("detect repo slug: %w", err)
+	}
+
+	ghRepo, err := in.GitHubClient.GetRepo(ctx, owner, repoName)
+	if err != nil {
+		return fmt.Errorf("look up repository: %w", err)
+	}
+	defaultBranch := ghRepo.DefaultBranch
+
+	remoteURL := in.RemoteURL
+	if remoteURL == "" {
+		remoteURL = GitHubHTTPSURL(owner, repoName)
+	}
+	auth := in.Auth
+	if auth == nil && in.RemoteURL == "" {
+		token, err := in.TokenProvider.GetToken()
+		if err != nil {
+			return fmt.Errorf("resolve token: %w", err)
+		}
+		auth = TokenAuth(token)
+	}
+	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
+		return fmt.Errorf("fetch origin: %w", err)
+	}
+
+	if !in.Force {
+		if err := RequireCleanWorktree(repoRoot); err != nil {
+			return err
+		}
+		originDefaultRef := "refs/remotes/origin/" + defaultBranch
+		if err := RequireSyncedWithRemote(repoRoot, originDefaultRef); err != nil {
+			return err
+		}
 	}
 
 	currentStr, err := in.Adapter.ReadVersion(repoRoot, in.Config)

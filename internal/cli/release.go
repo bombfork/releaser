@@ -63,7 +63,8 @@ func runReleaseDryRun(cmd *cobra.Command, repoRoot string) error {
 }
 
 func newReleasePrepareCommand() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "prepare",
 		Short: "Maintain the pending-release pull request",
 		Long: `Compute the next release version from commits since the latest tag,
@@ -73,18 +74,23 @@ that branch, and open or update the matching pull request.
 
 Idempotent: re-running on the same default-branch HEAD produces an
 equivalent end state. When no commits since the latest release warrant
-a version bump, prepare exits cleanly with no side effects.`,
+a version bump, prepare exits cleanly with no side effects.
+
+The worktree-clean check protects against silently discarding
+uncommitted changes during the branch reset. Use --force to override.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := cmd.Flags().GetString(RepoRootFlag)
 			if err != nil {
 				return err
 			}
-			return runReleasePrepare(cmd, repoRoot)
+			return runReleasePrepare(cmd, repoRoot, force)
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "Skip worktree-clean safety checks")
+	return cmd
 }
 
-func runReleasePrepare(cmd *cobra.Command, repoRoot string) error {
+func runReleasePrepare(cmd *cobra.Command, repoRoot string, force bool) error {
 	cfg, ad, err := loadConfigAndAdapter(repoRoot)
 	if err != nil {
 		return err
@@ -102,11 +108,13 @@ func runReleasePrepare(cmd *cobra.Command, repoRoot string) error {
 		Adapter:       ad,
 		GitHubClient:  ghClient,
 		TokenProvider: tp,
+		Force:         force,
 	})
 }
 
 func newReleasePublishCommand() *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "publish",
 		Short: "Publish the release for the current version",
 		Long: `Read the project version from the configured version locations,
@@ -117,18 +125,24 @@ artifacts that are not already attached as release assets.
 
 Idempotent: re-runs after partial failures only complete the missing
 steps. When the current version is not newer than the latest tag,
-publish exits cleanly with no side effects.`,
+publish exits cleanly with no side effects.
+
+Two safety checks run before any side effects: the worktree must be
+clean (no uncommitted changes), and the local HEAD must match the
+freshly-fetched origin/<default-branch>. Use --force to skip both.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := cmd.Flags().GetString(RepoRootFlag)
 			if err != nil {
 				return err
 			}
-			return runReleasePublish(cmd, repoRoot)
+			return runReleasePublish(cmd, repoRoot, force)
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "Skip worktree-clean and remote-sync safety checks")
+	return cmd
 }
 
-func runReleasePublish(cmd *cobra.Command, repoRoot string) error {
+func runReleasePublish(cmd *cobra.Command, repoRoot string, force bool) error {
 	cfg, ad, err := loadConfigAndAdapter(repoRoot)
 	if err != nil {
 		return err
@@ -148,6 +162,7 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string) error {
 		TokenProvider: tp,
 		Stdout:        cmd.OutOrStdout(),
 		Stderr:        cmd.ErrOrStderr(),
+		Force:         force,
 	})
 }
 
