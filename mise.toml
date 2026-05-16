@@ -1,7 +1,6 @@
 [tools]
 go = "latest"
 golangci-lint = "latest"
-goreleaser = "latest"
 gotestsum = "latest"
 
 [tasks.build]
@@ -34,4 +33,9 @@ depends = ["format", "lint", "build", "test"]
 
 [tasks.package]
 description = "build cross-platform release archives under dist/ (no release creation)"
-run = "goreleaser release --snapshot --skip=publish --clean"
+# Snapshot suffix mirrors goreleaser's --snapshot behavior: produces a
+# locally-installable build without claiming a real release version.
+run = '''
+version="$(grep -oE 'Version = "[^"]+"' internal/cli/root.go | cut -d'"' -f2)-snapshot"
+RELEASER_VERSION="$version" ./scripts/package.sh
+'''
