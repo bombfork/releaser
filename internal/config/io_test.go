@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/bombfork/releaser/internal/config"
@@ -119,7 +120,7 @@ func TestSave_LoadRoundTrip(t *testing.T) {
 	if loaded.Adapter != original.Adapter {
 		t.Errorf("adapter: %q != %q", loaded.Adapter, original.Adapter)
 	}
-	if loaded.Build != original.Build {
+	if !reflect.DeepEqual(loaded.Build, original.Build) {
 		t.Errorf("build: %+v != %+v", loaded.Build, original.Build)
 	}
 	if loaded.Workflows != original.Workflows {

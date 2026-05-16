@@ -60,6 +60,12 @@ type Adapter interface {
 	// generated workflows. May return zero-valued Snippets.
 	WorkflowSnippets(cfg config.Config) Snippets
 
+	// BuildEnv returns extra environment variables to expose to the
+	// build command. The engine merges these on top of the standard
+	// RELEASER_VERSION / RELEASER_TAG pair before running the build.
+	// Adapters that need no extra environment return nil.
+	BuildEnv(cfg config.Config) map[string]string
+
 	// ReadVersion returns the project's current version string. Adapters
 	// that want the engine to fall back to the configured (path, regex)
 	// lookup return ErrFallbackToConfig.

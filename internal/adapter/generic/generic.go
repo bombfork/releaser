@@ -51,6 +51,9 @@ func (*Adapter) WorkflowSnippets(_ config.Config) adapter.Snippets {
 	return adapter.Snippets{}
 }
 
+// BuildEnv contributes no adapter-specific environment variables.
+func (*Adapter) BuildEnv(_ config.Config) map[string]string { return nil }
+
 // ReadVersion returns the current project version, taken from the first
 // configured version.locations entry. The regex is run in multiline mode
 // (`(?m)` is prepended if the regex does not already begin with an

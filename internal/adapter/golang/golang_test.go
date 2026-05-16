@@ -51,7 +51,6 @@ func TestDetect_NoGoMod(t *testing.T) {
 }
 
 func TestDetect_GoModIsDirectory(t *testing.T) {
-	// A directory named "go.mod" should not count as a Go project.
 	repo := t.TempDir()
 	if err := os.Mkdir(filepath.Join(repo, "go.mod"), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -65,7 +64,7 @@ func TestDetect_GoModIsDirectory(t *testing.T) {
 	}
 }
 
-func TestSuggestDefaults_ProvidesBuildAndArtifacts(t *testing.T) {
+func TestSuggestDefaults_ProvidesBuildAndTargets(t *testing.T) {
 	s, err := golang.New().SuggestDefaults(t.TempDir())
 	if err != nil {
 		t.Fatalf("SuggestDefaults: %v", err)
@@ -73,66 +72,137 @@ func TestSuggestDefaults_ProvidesBuildAndArtifacts(t *testing.T) {
 	if s.Build == nil {
 		t.Fatal("expected Build defaults")
 	}
-	if !strings.Contains(s.Build.Command, "goreleaser") {
-		t.Errorf("Build.Command should default to a goreleaser invocation, got %q", s.Build.Command)
+	if !strings.Contains(s.Build.Command, "go build") {
+		t.Errorf("Build.Command should default to a `go build` shell loop, got %q", s.Build.Command)
 	}
-	if !strings.Contains(s.Build.Command, "$RELEASER_TAG") {
-		t.Errorf("Build.Command should thread RELEASER_TAG, got %q", s.Build.Command)
+	if !strings.Contains(s.Build.Command, "$RELEASER_GO_TARGETS") {
+		t.Errorf("Build.Command should consume $RELEASER_GO_TARGETS, got %q", s.Build.Command)
+	}
+	if !strings.Contains(s.Build.Command, "RELEASER_VERSION") {
+		t.Errorf("Build.Command should embed RELEASER_VERSION in archive names, got %q", s.Build.Command)
 	}
 	if s.Build.Artifacts != "dist/*.tar.gz" {
 		t.Errorf("Build.Artifacts = %q, want dist/*.tar.gz", s.Build.Artifacts)
 	}
-	// Version locations are intentionally NOT suggested — the user
-	// must point at their version literal explicitly for now.
+	if len(s.Build.Targets) == 0 {
+		t.Fatal("expected non-empty default Targets")
+	}
+	for _, want := range []config.BuildTarget{
+		{OS: "linux", Arch: "amd64"},
+		{OS: "darwin", Arch: "arm64"},
+	} {
+		found := false
+		for _, t2 := range s.Build.Targets {
+			if t2 == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("default Targets missing %+v; got %+v", want, s.Build.Targets)
+		}
+	}
 	if s.Version != nil {
 		t.Errorf("Version defaults should be nil, got %+v", s.Version)
 	}
 }
 
-func TestValidateConfig_RequiresBuildCommand(t *testing.T) {
-	cfg := config.Config{
+func validBase() config.Config {
+	return config.Config{
+		Build: config.Build{
+			Command:   "go build ./...",
+			Artifacts: "dist/*.tar.gz",
+			Targets:   []config.BuildTarget{{OS: "linux", Arch: "amd64"}},
+		},
 		Version: config.Version{Locations: []config.VersionLocation{
 			{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
 		}},
 	}
+}
+
+func TestValidateConfig_Happy(t *testing.T) {
+	if err := golang.New().ValidateConfig(validBase()); err != nil {
+		t.Errorf("ValidateConfig: %v", err)
+	}
+}
+
+func TestValidateConfig_RequiresBuildCommand(t *testing.T) {
+	cfg := validBase()
+	cfg.Build.Command = ""
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when build.command is empty")
 	}
 }
 
+func TestValidateConfig_RequiresArtifacts(t *testing.T) {
+	cfg := validBase()
+	cfg.Build.Artifacts = ""
+	if err := golang.New().ValidateConfig(cfg); err == nil {
+		t.Error("expected error when build.artifacts is empty")
+	}
+}
+
 func TestValidateConfig_RequiresVersionLocation(t *testing.T) {
-	cfg := config.Config{Build: config.Build{Command: "go build ./..."}}
+	cfg := validBase()
+	cfg.Version.Locations = nil
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when version.locations is empty")
 	}
 }
 
-func TestValidateConfig_Happy(t *testing.T) {
-	cfg := config.Config{
-		Build: config.Build{Command: "go build ./..."},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
-		}},
-	}
-	if err := golang.New().ValidateConfig(cfg); err != nil {
-		t.Errorf("ValidateConfig: %v", err)
+func TestValidateConfig_RequiresAtLeastOneTarget(t *testing.T) {
+	cfg := validBase()
+	cfg.Build.Targets = nil
+	if err := golang.New().ValidateConfig(cfg); err == nil {
+		t.Error("expected error when build.targets is empty")
 	}
 }
 
-func TestWorkflowSnippets_IncludesSetupGoAndGoReleaser(t *testing.T) {
-	s := golang.New().WorkflowSnippets(config.Config{})
-	if len(s.SetupSteps) != 2 {
-		t.Fatalf("got %d setup steps, want 2", len(s.SetupSteps))
+func TestValidateConfig_RequiresOSAndArchOnEachTarget(t *testing.T) {
+	cfg := validBase()
+	cfg.Build.Targets = []config.BuildTarget{{OS: "linux"}}
+	if err := golang.New().ValidateConfig(cfg); err == nil {
+		t.Error("expected error when a target is missing arch")
 	}
-	joined := strings.Join(s.SetupSteps, "\n")
-	for _, want := range []string{
-		"actions/setup-go@v5",
-		"goreleaser/goreleaser-action@v6",
-		"install-only: true",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("setup steps missing %q:\n%s", want, joined)
-		}
+
+	cfg.Build.Targets = []config.BuildTarget{{Arch: "amd64"}}
+	if err := golang.New().ValidateConfig(cfg); err == nil {
+		t.Error("expected error when a target is missing os")
+	}
+}
+
+func TestWorkflowSnippets_OnlySetupGo(t *testing.T) {
+	s := golang.New().WorkflowSnippets(config.Config{})
+	if len(s.SetupSteps) != 1 {
+		t.Fatalf("got %d setup steps, want 1", len(s.SetupSteps))
+	}
+	if !strings.Contains(s.SetupSteps[0], "actions/setup-go@v6") {
+		t.Errorf("setup step should reference actions/setup-go@v6, got %q", s.SetupSteps[0])
+	}
+	if strings.Contains(s.SetupSteps[0], "goreleaser") {
+		t.Errorf("basic go adapter should not inject goreleaser setup, got %q", s.SetupSteps[0])
+	}
+}
+
+func TestBuildEnv_EncodesTargetsAsSpaceSeparatedList(t *testing.T) {
+	cfg := config.Config{Build: config.Build{Targets: []config.BuildTarget{
+		{OS: "linux", Arch: "amd64"},
+		{OS: "darwin", Arch: "arm64"},
+	}}}
+	env := golang.New().BuildEnv(cfg)
+	got, ok := env["RELEASER_GO_TARGETS"]
+	if !ok {
+		t.Fatalf("expected RELEASER_GO_TARGETS in env, got %v", env)
+	}
+	want := "linux/amd64 darwin/arm64"
+	if got != want {
+		t.Errorf("RELEASER_GO_TARGETS = %q, want %q", got, want)
+	}
+}
+
+func TestBuildEnv_NilWhenNoTargets(t *testing.T) {
+	if env := golang.New().BuildEnv(config.Config{}); env != nil {
+		t.Errorf("BuildEnv should be nil when no targets configured, got %v", env)
 	}
 }
 

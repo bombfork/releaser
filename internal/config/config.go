@@ -148,6 +148,21 @@ type Build struct {
 	// Artifacts is a glob pattern matching the files to attach to the
 	// GitHub release.
 	Artifacts string `yaml:"artifacts"`
+
+	// Targets is the list of (OS, Arch) pairs the build should produce
+	// binaries for. Consumed by adapters that drive cross-compilation
+	// directly (e.g. the "go" adapter exports the list as the
+	// RELEASER_GO_TARGETS environment variable). Adapters that delegate
+	// cross-compilation to an external tool (e.g. goreleaser, which
+	// owns its own target matrix) ignore this field.
+	Targets []BuildTarget `yaml:"targets,omitempty"`
+}
+
+// BuildTarget is a single (OS, Arch) pair for cross-compilation,
+// matching Go's GOOS / GOARCH conventions.
+type BuildTarget struct {
+	OS   string `yaml:"os"`
+	Arch string `yaml:"arch"`
 }
 
 // Commit holds commit-convention overrides.

@@ -119,6 +119,9 @@ func mergePreset(suggestions config.Suggestions, preset *config.Config) config.C
 		if out.Build.Artifacts == "" {
 			out.Build.Artifacts = suggestions.Build.Artifacts
 		}
+		if len(out.Build.Targets) == 0 {
+			out.Build.Targets = suggestions.Build.Targets
+		}
 	}
 	if suggestions.Version != nil && len(out.Version.Locations) == 0 {
 		out.Version.Locations = suggestions.Version.Locations

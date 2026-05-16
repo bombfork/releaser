@@ -34,7 +34,7 @@ func TestGenerate_RendersBothWorkflowsAtDefaultNames(t *testing.T) {
 			t.Errorf("%s: action ref not substituted:\n%s", name, body)
 		}
 		// GitHub Actions expressions must survive untouched.
-		if !strings.Contains(body, "${{ secrets.GITHUB_TOKEN }}") {
+		if !strings.Contains(body, "${{ github.token }}") {
 			t.Errorf("%s: GitHub expression mangled:\n%s", name, body)
 		}
 	}

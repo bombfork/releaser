@@ -7,6 +7,7 @@ import (
 
 	"github.com/bombfork/releaser/internal/adapter/generic"
 	"github.com/bombfork/releaser/internal/adapter/golang"
+	"github.com/bombfork/releaser/internal/adapter/goreleaser"
 	"github.com/bombfork/releaser/internal/adapters"
 )
 
@@ -41,7 +42,7 @@ func TestDefaultRegistry_ByName(t *testing.T) {
 	}
 }
 
-func TestDefaultRegistry_PrefersGolangOverGenericWhenGoModPresent(t *testing.T) {
+func TestDefaultRegistry_PrefersBasicGoOnPlainGoRepo(t *testing.T) {
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/foo\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
@@ -52,7 +53,25 @@ func TestDefaultRegistry_PrefersGolangOverGenericWhenGoModPresent(t *testing.T) 
 		t.Fatalf("Detect: %v", err)
 	}
 	if a.Name() != golang.Name {
-		t.Errorf("expected %q adapter on a Go repo, got %q", golang.Name, a.Name())
+		t.Errorf("expected %q adapter on a plain Go repo, got %q", golang.Name, a.Name())
+	}
+}
+
+func TestDefaultRegistry_PrefersGoReleaserWhenGoReleaserConfigPresent(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/foo\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".goreleaser.yaml"), []byte("project_name: foo\n"), 0o644); err != nil {
+		t.Fatalf("write .goreleaser.yaml: %v", err)
+	}
+
+	a, err := adapters.DefaultRegistry().Detect(repo)
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if a.Name() != goreleaser.Name {
+		t.Errorf("expected %q adapter on a Go repo with .goreleaser.yaml, got %q", goreleaser.Name, a.Name())
 	}
 }
 
@@ -62,6 +81,16 @@ func TestDefaultRegistry_GolangByName(t *testing.T) {
 		t.Fatalf("ByName(%q): not found", golang.Name)
 	}
 	if a.Name() != golang.Name {
+		t.Errorf("ByName returned adapter named %q", a.Name())
+	}
+}
+
+func TestDefaultRegistry_GoReleaserByName(t *testing.T) {
+	a, ok := adapters.DefaultRegistry().ByName(goreleaser.Name)
+	if !ok {
+		t.Fatalf("ByName(%q): not found", goreleaser.Name)
+	}
+	if a.Name() != goreleaser.Name {
 		t.Errorf("ByName returned adapter named %q", a.Name())
 	}
 }

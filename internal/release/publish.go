@@ -163,7 +163,11 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 		return fmt.Errorf("fetch tags after ensuring release: %w", err)
 	}
 
-	artifacts, err := RunBuild(repoRoot, in.Config, BuildEnvForVersion(current), in.Stdout, in.Stderr)
+	buildEnv := BuildEnvForVersion(current)
+	for k, v := range in.Adapter.BuildEnv(in.Config) {
+		buildEnv[k] = v
+	}
+	artifacts, err := RunBuild(repoRoot, in.Config, buildEnv, in.Stdout, in.Stderr)
 	if err != nil {
 		return fmt.Errorf("run build: %w", err)
 	}
