@@ -1,4 +1,4 @@
-adapter: generic
+adapter: go
 build:
     command: GORELEASER_CURRENT_TAG="$RELEASER_TAG" goreleaser release --skip=publish,validate --clean
     artifacts: dist/releaser_*.tar.gz
