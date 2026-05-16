@@ -33,19 +33,19 @@ func TestInit_FromPresetWritesConfigAtDefaultPath(t *testing.T) {
 		t.Fatalf("parse config: %v", err)
 	}
 
-	if got.Adapter != "generic" {
-		t.Errorf("adapter = %q, want %q", got.Adapter, "generic")
+	if got.Adapter.Type != "generic" {
+		t.Errorf("adapter.type = %q, want %q", got.Adapter.Type, "generic")
 	}
-	if got.Build.Command != "make build" {
-		t.Errorf("build.command = %q, want %q", got.Build.Command, "make build")
+	if got.Adapter.Build.Command != "make build" {
+		t.Errorf("build.command = %q, want %q", got.Adapter.Build.Command, "make build")
 	}
-	if got.Build.Artifacts != "dist/*" {
-		t.Errorf("build.artifacts = %q, want %q", got.Build.Artifacts, "dist/*")
+	if got.Adapter.Build.Artifacts != "dist/*" {
+		t.Errorf("build.artifacts = %q, want %q", got.Adapter.Build.Artifacts, "dist/*")
 	}
-	if len(got.Version.Locations) != 1 {
-		t.Fatalf("version.locations: got %d entries, want 1", len(got.Version.Locations))
+	if len(got.Adapter.Version.Locations) != 1 {
+		t.Fatalf("version.locations: got %d entries, want 1", len(got.Adapter.Version.Locations))
 	}
-	loc := got.Version.Locations[0]
+	loc := got.Adapter.Version.Locations[0]
 	if loc.Path != "Makefile" || loc.Regex != `^VERSION := (.*)$` {
 		t.Errorf("version.locations[0] = %+v", loc)
 	}
@@ -56,7 +56,7 @@ func TestInit_FromPresetWritesConfigAtDefaultPath(t *testing.T) {
 func TestInit_RefusesToClobberExistingConfig(t *testing.T) {
 	repo := t.TempDir()
 	existing := filepath.Join(repo, config.DefaultFilePath)
-	writeFile(t, existing, "adapter: generic\n# pre-existing\n")
+	writeFile(t, existing, "adapter:\n  type: generic\n# pre-existing\n")
 
 	preset := filepath.Join(repo, "preset.yaml")
 	writeFile(t, preset, validConfig)
@@ -70,7 +70,7 @@ func TestInit_RefusesToClobberExistingConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read existing config: %v", err)
 	}
-	if string(raw) != "adapter: generic\n# pre-existing\n" {
+	if string(raw) != "adapter:\n  type: generic\n# pre-existing\n" {
 		t.Errorf("existing config was modified by init:\n%s", raw)
 	}
 }
@@ -81,7 +81,7 @@ func TestInit_RejectsPresetFailingAdapterValidation(t *testing.T) {
 	repo := t.TempDir()
 	preset := filepath.Join(repo, "preset.yaml")
 	// generic adapter requires build.command and version.locations.
-	writeFile(t, preset, "adapter: generic\n")
+	writeFile(t, preset, "adapter:\n  type: generic\n")
 
 	r := runCLI(t, "init", "--from", preset, "--repo-root", repo)
 	if r.err == nil {

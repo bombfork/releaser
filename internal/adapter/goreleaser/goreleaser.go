@@ -25,6 +25,16 @@ import (
 // Name is the value stored in the configuration's adapter field.
 const Name = "goreleaser"
 
+// DefaultBuildCommand is the shell command used as Build.Command when
+// the user does not override it. It threads RELEASER_TAG into
+// GoReleaser via GORELEASER_CURRENT_TAG and skips both publish and
+// validate steps (the engine owns release creation and tag handling).
+const DefaultBuildCommand = `GORELEASER_CURRENT_TAG="$RELEASER_TAG" goreleaser release --skip=publish,validate --clean`
+
+// DefaultArtifacts is the artifact glob used as Build.Artifacts when
+// the user does not override it.
+const DefaultArtifacts = "dist/*.tar.gz"
+
 // Adapter is the GoReleaser implementation of adapter.Adapter.
 type Adapter struct{}
 
@@ -63,21 +73,37 @@ func (*Adapter) Detect(repoRoot string) (bool, error) {
 func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 	return config.Suggestions{
 		Build: &config.Build{
-			Command:   `GORELEASER_CURRENT_TAG="$RELEASER_TAG" goreleaser release --skip=publish,validate --clean`,
-			Artifacts: "dist/*.tar.gz",
+			Command:   DefaultBuildCommand,
+			Artifacts: DefaultArtifacts,
 		},
 	}, nil
+}
+
+// SchemaInfo describes the goreleaser adapter's schema rules for
+// `releaser config schema`.
+func (*Adapter) SchemaInfo() config.AdapterInfo {
+	return config.AdapterInfo{
+		Name: Name,
+		Required: []string{
+			"adapter.build.command",
+			"adapter.version.locations",
+		},
+		Defaults: map[string]string{
+			"adapter.build.command":   DefaultBuildCommand,
+			"adapter.build.artifacts": DefaultArtifacts,
+		},
+	}
 }
 
 // ValidateConfig enforces the minimum information the goreleaser
 // adapter needs. Targets are intentionally not consulted here:
 // goreleaser owns its own target matrix via .goreleaser.yaml.
 func (*Adapter) ValidateConfig(cfg config.Config) error {
-	if cfg.Build.Command == "" {
-		return errors.New("goreleaser adapter requires build.command")
+	if cfg.Adapter.Build.Command == "" {
+		return errors.New("goreleaser adapter requires adapter.build.command")
 	}
-	if len(cfg.Version.Locations) == 0 {
-		return errors.New("goreleaser adapter requires at least one version.locations entry")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return errors.New("goreleaser adapter requires at least one adapter.version.locations entry")
 	}
 	return nil
 }
@@ -103,10 +129,10 @@ func (*Adapter) BuildEnv(_ config.Config) map[string]string { return nil }
 // configured version.locations entry. Mirrors the generic adapter's
 // implementation.
 func (*Adapter) ReadVersion(repoRoot string, cfg config.Config) (string, error) {
-	if len(cfg.Version.Locations) == 0 {
-		return "", errors.New("no version.locations configured")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return "", errors.New("no adapter.version.locations configured")
 	}
-	loc := cfg.Version.Locations[0]
+	loc := cfg.Adapter.Version.Locations[0]
 	pattern := loc.Regex
 	if !strings.HasPrefix(pattern, "(?") {
 		pattern = "(?m)" + pattern

@@ -65,14 +65,16 @@ func initPublishFixture(t *testing.T) (upstream, local string) {
 
 func publishCfg() config.Config {
 	return config.Config{
-		Adapter: "generic",
-		Build: config.Build{
-			Command:   "mkdir -p dist && touch dist/releaser_linux_amd64.tar.gz dist/releaser_darwin_arm64.tar.gz",
-			Artifacts: "dist/*",
+		Adapter: config.Adapter{
+			Type: "generic",
+			Build: config.Build{
+				Command:   "mkdir -p dist && touch dist/releaser_linux_amd64.tar.gz dist/releaser_darwin_arm64.tar.gz",
+				Artifacts: "dist/*",
+			},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
 		},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
 	}
 }
 

@@ -226,7 +226,7 @@ func describePreparePlan(ctx context.Context, out io.Writer, in PrepareInputs, p
 	fmt.Fprintln(&buf, "-------------------------")
 	fmt.Fprintf(&buf, "Would reset branch %q from origin/%s\n", branchName, defaultBranch)
 	fmt.Fprintf(&buf, "Would rewrite version files to %s:\n", plan.NextVersion)
-	for _, loc := range in.Config.Version.Locations {
+	for _, loc := range in.Config.Adapter.Version.Locations {
 		fmt.Fprintf(&buf, "  - %s  (regex: %s)\n", loc.Path, loc.Regex)
 	}
 	fmt.Fprintf(&buf, "Would commit as %s <%s>: %q\n", identity.Name, identity.Email, commitMsg)

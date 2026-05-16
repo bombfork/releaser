@@ -34,14 +34,26 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 	return config.Suggestions{}, nil
 }
 
+// SchemaInfo describes the generic adapter's schema rules for
+// `releaser config schema`.
+func (*Adapter) SchemaInfo() config.AdapterInfo {
+	return config.AdapterInfo{
+		Name: Name,
+		Required: []string{
+			"adapter.build.command",
+			"adapter.version.locations",
+		},
+	}
+}
+
 // ValidateConfig enforces the minimum information the generic adapter needs
 // to drive a release: a build command and at least one version location.
 func (*Adapter) ValidateConfig(cfg config.Config) error {
-	if cfg.Build.Command == "" {
-		return errors.New("generic adapter requires build.command")
+	if cfg.Adapter.Build.Command == "" {
+		return errors.New("generic adapter requires adapter.build.command")
 	}
-	if len(cfg.Version.Locations) == 0 {
-		return errors.New("generic adapter requires at least one version.locations entry")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return errors.New("generic adapter requires at least one adapter.version.locations entry")
 	}
 	return nil
 }
@@ -62,10 +74,10 @@ func (*Adapter) BuildEnv(_ config.Config) map[string]string { return nil }
 // surrounding whitespace is stripped but the value is otherwise returned
 // verbatim (a leading "v" is preserved if the user's regex captures it).
 func (*Adapter) ReadVersion(repoRoot string, cfg config.Config) (string, error) {
-	if len(cfg.Version.Locations) == 0 {
-		return "", errors.New("no version.locations configured")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return "", errors.New("no adapter.version.locations configured")
 	}
-	loc := cfg.Version.Locations[0]
+	loc := cfg.Adapter.Version.Locations[0]
 	pattern := loc.Regex
 	if !strings.HasPrefix(pattern, "(?") {
 		pattern = "(?m)" + pattern

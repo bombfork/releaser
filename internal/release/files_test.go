@@ -34,9 +34,9 @@ func TestRewriteVersionFiles_Makefile(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "Makefile"), "PROJECT := releaser\nVERSION := 0.1.0\nall:\n\techo hi\n", 0o644)
 
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-	}}}
+	}}}}
 	if err := release.RewriteVersionFiles(repo, cfg, "0.2.0"); err != nil {
 		t.Fatalf("RewriteVersionFiles: %v", err)
 	}
@@ -51,9 +51,9 @@ func TestRewriteVersionFiles_CargoToml(t *testing.T) {
 	body := "[package]\nname = \"foo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
 	writeFile(t, filepath.Join(repo, "Cargo.toml"), body, 0o644)
 
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "Cargo.toml", Regex: `^version = "(.*)"$`},
-	}}}
+	}}}}
 	if err := release.RewriteVersionFiles(repo, cfg, "0.2.0"); err != nil {
 		t.Fatalf("RewriteVersionFiles: %v", err)
 	}
@@ -72,10 +72,10 @@ func TestRewriteVersionFiles_MultipleFiles(t *testing.T) {
 	writeFile(t, filepath.Join(repo, "Makefile"), "VERSION := 0.1.0\n", 0o644)
 	writeFile(t, filepath.Join(repo, "version.txt"), "0.1.0\n", 0o644)
 
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 		{Path: "version.txt", Regex: `^(.+)$`},
-	}}}
+	}}}}
 	if err := release.RewriteVersionFiles(repo, cfg, "0.2.0"); err != nil {
 		t.Fatalf("RewriteVersionFiles: %v", err)
 	}
@@ -94,9 +94,9 @@ func TestRewriteVersionFiles_MultipleMatchesInOneFile(t *testing.T) {
 	body := "version = \"0.1.0\"\n# pinned to \"0.1.0\" for now\n"
 	writeFile(t, filepath.Join(repo, "f"), body, 0o644)
 
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "f", Regex: `"([^"]+)"`},
-	}}}
+	}}}}
 	if err := release.RewriteVersionFiles(repo, cfg, "0.2.0"); err != nil {
 		t.Fatalf("RewriteVersionFiles: %v", err)
 	}
@@ -111,9 +111,9 @@ func TestRewriteVersionFiles_PreservesFileMode(t *testing.T) {
 	scriptPath := filepath.Join(repo, "release.sh")
 	writeFile(t, scriptPath, "#!/bin/sh\nVERSION=0.1.0\n", 0o755)
 
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "release.sh", Regex: `^VERSION=(.*)$`},
-	}}}
+	}}}}
 	if err := release.RewriteVersionFiles(repo, cfg, "0.2.0"); err != nil {
 		t.Fatalf("RewriteVersionFiles: %v", err)
 	}
@@ -130,9 +130,9 @@ func TestRewriteVersionFiles_NoMatchIsError(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "Makefile"), "no version here\n", 0o644)
 
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-	}}}
+	}}}}
 	err := release.RewriteVersionFiles(repo, cfg, "0.2.0")
 	if err == nil {
 		t.Fatal("expected error when regex does not match")
@@ -148,9 +148,9 @@ func TestRewriteVersionFiles_RejectsZeroOrMultipleCaptureGroups(t *testing.T) {
 		`(VERSION) (.*)`, // two capture groups
 		`((nested))`,     // also two
 	} {
-		cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+		cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 			{Path: "f", Regex: pattern},
-		}}}
+		}}}}
 		err := release.RewriteVersionFiles(repo, cfg, "0.2.0")
 		if err == nil {
 			t.Errorf("regex %q: expected error", pattern)
@@ -165,9 +165,9 @@ func TestRewriteVersionFiles_NoLocationsConfigured(t *testing.T) {
 }
 
 func TestRewriteVersionFiles_MissingFile(t *testing.T) {
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "doesnotexist", Regex: `^(.+)$`},
-	}}}
+	}}}}
 	err := release.RewriteVersionFiles(t.TempDir(), cfg, "0.2.0")
 	if err == nil {
 		t.Fatal("expected error for missing file")

@@ -21,41 +21,34 @@ const (
 const DefaultFilePath = ".github/releaser.yaml"
 
 // Config is the full releaser configuration as stored on disk.
+//
+// The schema splits along two axes: adapter-owned fields (build command,
+// artifact glob, version locations) live under the `adapter` key alongside
+// the adapter type discriminator; cross-cutting fields that apply
+// regardless of which adapter is in use (commit conventions, workflow
+// file names, release-time behavior) live at the root.
 type Config struct {
-	// Adapter is the name of the stack adapter that owns this configuration
-	// (e.g. "generic"). Determines which validation, autodetection, and
-	// workflow-generation rules apply.
-	Adapter string `yaml:"adapter"`
+	Adapter   Adapter   `yaml:"adapter"             desc:"Stack adapter type and the build / version fields owned by that adapter"`
+	Commit    Commit    `yaml:"commit,omitempty"    desc:"Commit-convention overrides for the conventional-commit to bump-level mapping"`
+	Workflows Workflows `yaml:"workflows,omitempty" desc:"File names for the workflows produced by 'releaser generate'"`
+	Release   Release   `yaml:"release,omitempty"   desc:"Pending-release branch, default branch, and CI bot identity used by 'releaser prepare'"`
+}
 
-	// Build describes how to produce the release artifacts.
-	Build Build `yaml:"build"`
-
-	// Commit overrides the default conventional-commit → bump-level mapping.
-	Commit Commit `yaml:"commit,omitempty"`
-
-	// Version describes where the project version string lives in the repo.
-	Version Version `yaml:"version,omitempty"`
-
-	// Workflows configures the names of the workflow files written by
-	// `releaser generate`. Unset fields fall back to DefaultWorkflows().
-	Workflows Workflows `yaml:"workflows,omitempty"`
-
-	// Release configures the side-effecting half of the release process:
-	// the pending-release branch name and the bot identity used for
-	// CI-driven commits. Unset fields fall back to DefaultRelease().
-	Release Release `yaml:"release,omitempty"`
+// Adapter is the stack-adapter-owned configuration block. The shared
+// shape (Build + Version) is identical across adapters today; the Type
+// discriminator selects which adapter's validation, autodetection, and
+// workflow-generation rules apply.
+type Adapter struct {
+	Type    string  `yaml:"type"              desc:"Stack adapter identifier (e.g. generic, go, goreleaser)"`
+	Build   Build   `yaml:"build"             desc:"Build command and artifact glob"`
+	Version Version `yaml:"version,omitempty" desc:"Locations of the project version string in the repo"`
 }
 
 // Workflows holds the names of the workflow files produced by `generate`.
 // File names are relative to .github/workflows/.
 type Workflows struct {
-	// PendingReleaseFile is the workflow that maintains the pending-release
-	// pull request on every push to the default branch.
-	PendingReleaseFile string `yaml:"pending_release_file,omitempty"`
-
-	// PublishFile is the workflow that publishes the release when the
-	// pending-release pull request is merged.
-	PublishFile string `yaml:"publish_file,omitempty"`
+	PendingReleaseFile string `yaml:"pending_release_file,omitempty" desc:"Workflow file maintaining the pending-release pull request on every push to the default branch"`
+	PublishFile        string `yaml:"publish_file,omitempty"         desc:"Workflow file publishing the release when the pending-release pull request is merged"`
 }
 
 // DefaultWorkflows returns the default file names used when the user does
@@ -81,30 +74,17 @@ func (w Workflows) WithDefaults() Workflows {
 
 // Release configures the side-effecting half of the release process.
 type Release struct {
-	// BranchName is the head branch the pending-release pull request is
-	// opened from. Defaults to "releaser/pending-release".
-	BranchName string `yaml:"branch_name,omitempty"`
-
-	// DefaultBranch is the name of the project's default branch (e.g.
-	// "main", "trunk"). It is used by `releaser generate` to set the
-	// trigger branches on the generated workflows. At runtime, the
-	// release prepare command queries the GitHub API for the actual
-	// default branch and uses that instead.
-	DefaultBranch string `yaml:"default_branch,omitempty"`
-
-	// BotIdentity is the git author/committer used for the version-bump
-	// commit when running in CI (GITHUB_ACTIONS=true). When running
-	// locally, the user's git config is used instead and this field is
-	// ignored.
-	BotIdentity BotIdentity `yaml:"bot_identity,omitempty"`
+	BranchName    string      `yaml:"branch_name,omitempty"    desc:"Head branch the pending-release pull request is opened from"`
+	DefaultBranch string      `yaml:"default_branch,omitempty" desc:"Project default branch name (used by 'releaser generate'; runtime uses the GitHub API)"`
+	BotIdentity   BotIdentity `yaml:"bot_identity,omitempty"   desc:"Git author and committer used for the version-bump commit when running in CI"`
 }
 
 // BotIdentity is the git author/committer used for releaser-driven
 // commits in CI mode. Defaults to the standard GitHub Actions bot, which
 // works out of the box for users relying on the built-in GITHUB_TOKEN.
 type BotIdentity struct {
-	Name  string `yaml:"name,omitempty"`
-	Email string `yaml:"email,omitempty"`
+	Name  string `yaml:"name,omitempty"  desc:"Git author / committer name"`
+	Email string `yaml:"email,omitempty" desc:"Git author / committer email"`
 }
 
 // DefaultRelease returns the default Release configuration: the standard
@@ -141,50 +121,33 @@ func (r Release) WithDefaults() Release {
 
 // Build describes how to produce release artifacts and which files to attach.
 type Build struct {
-	// Command is the shell command (or path to a script) that produces the
-	// release artifacts when executed at the repository root.
-	Command string `yaml:"command"`
-
-	// Artifacts is a glob pattern matching the files to attach to the
-	// GitHub release.
-	Artifacts string `yaml:"artifacts"`
-
-	// Targets is the list of (OS, Arch) pairs the build should produce
-	// binaries for. Consumed by adapters that drive cross-compilation
-	// directly (e.g. the "go" adapter exports the list as the
-	// RELEASER_GO_TARGETS environment variable). Adapters that delegate
-	// cross-compilation to an external tool (e.g. goreleaser, which
-	// owns its own target matrix) ignore this field.
-	Targets []BuildTarget `yaml:"targets,omitempty"`
+	Command   string        `yaml:"command"           desc:"Shell command (or path to a script) producing the release artifacts when run at the repo root"`
+	Artifacts string        `yaml:"artifacts"         desc:"Glob pattern matching the files to attach to the GitHub release"`
+	Targets   []BuildTarget `yaml:"targets,omitempty" desc:"(OS, Arch) pairs to cross-compile for; consumed by adapters that drive cross-compilation directly"`
 }
 
 // BuildTarget is a single (OS, Arch) pair for cross-compilation,
 // matching Go's GOOS / GOARCH conventions.
 type BuildTarget struct {
-	OS   string `yaml:"os"`
-	Arch string `yaml:"arch"`
+	OS   string `yaml:"os"   desc:"GOOS-style operating system name (e.g. linux, darwin, windows)"`
+	Arch string `yaml:"arch" desc:"GOARCH-style architecture name (e.g. amd64, arm64)"`
 }
 
 // Commit holds commit-convention overrides.
 type Commit struct {
-	// Conventions maps a commit type prefix (e.g. "deps", "fix", "feat") to
-	// the bump level it should trigger. Unset entries fall back to the
-	// built-in conventional-commit defaults.
-	Conventions map[string]BumpLevel `yaml:"conventions,omitempty"`
+	Conventions map[string]BumpLevel `yaml:"conventions,omitempty" desc:"Map of commit type prefix (e.g. deps, fix, feat) to bump level (patch / minor / major / none)"`
 }
 
 // Version describes how to find and update the project version string.
 type Version struct {
-	// Locations is the list of (file, regex) pairs where the project version
-	// string appears. The release process updates each location atomically.
-	Locations []VersionLocation `yaml:"locations,omitempty"`
+	Locations []VersionLocation `yaml:"locations,omitempty" desc:"(path, regex) pairs locating the project version string; each regex must contain exactly one capture group"`
 }
 
 // VersionLocation is a single (file, regex) pair locating a version string.
 // The regex must contain exactly one capturing group around the version itself.
 type VersionLocation struct {
-	Path  string `yaml:"path"`
-	Regex string `yaml:"regex"`
+	Path  string `yaml:"path"  desc:"Repo-relative path to the file containing the version string"`
+	Regex string `yaml:"regex" desc:"Regex capturing the version string (exactly one capture group)"`
 }
 
 // Suggestions is the set of values an adapter can infer from a repository,

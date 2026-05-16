@@ -71,3 +71,12 @@ type Adapter interface {
 	// lookup return ErrFallbackToConfig.
 	ReadVersion(repoRoot string, cfg config.Config) (string, error)
 }
+
+// SchemaContributor is an optional interface adapters can implement to
+// teach `releaser config schema` what fields they require, reject, or
+// pre-fill by default. Adapters that do not implement it produce an
+// unannotated schema scope: structurally complete, but without the
+// per-adapter required / forbidden / default markers.
+type SchemaContributor interface {
+	SchemaInfo() config.AdapterInfo
+}

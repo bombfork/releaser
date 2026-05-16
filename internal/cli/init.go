@@ -66,7 +66,7 @@ func initFromPreset(repoRoot, fromPath string) error {
 	if err != nil {
 		return err
 	}
-	preset.Adapter = ad.Name()
+	preset.Adapter.Type = ad.Name()
 
 	suggestions, err := ad.SuggestDefaults(repoRoot)
 	if err != nil {
@@ -97,10 +97,10 @@ func loadPreset(path string) (*config.Config, error) {
 // highest-priority adapter that applies to repoRoot.
 func selectAdapter(repoRoot string, preset *config.Config) (adapter.Adapter, error) {
 	registry := adapters.DefaultRegistry()
-	if preset.Adapter != "" {
-		a, ok := registry.ByName(preset.Adapter)
+	if preset.Adapter.Type != "" {
+		a, ok := registry.ByName(preset.Adapter.Type)
 		if !ok {
-			return nil, fmt.Errorf("unknown adapter %q", preset.Adapter)
+			return nil, fmt.Errorf("unknown adapter %q", preset.Adapter.Type)
 		}
 		return a, nil
 	}
@@ -113,18 +113,18 @@ func selectAdapter(repoRoot string, preset *config.Config) (adapter.Adapter, err
 func mergePreset(suggestions config.Suggestions, preset *config.Config) config.Config {
 	out := *preset
 	if suggestions.Build != nil {
-		if out.Build.Command == "" {
-			out.Build.Command = suggestions.Build.Command
+		if out.Adapter.Build.Command == "" {
+			out.Adapter.Build.Command = suggestions.Build.Command
 		}
-		if out.Build.Artifacts == "" {
-			out.Build.Artifacts = suggestions.Build.Artifacts
+		if out.Adapter.Build.Artifacts == "" {
+			out.Adapter.Build.Artifacts = suggestions.Build.Artifacts
 		}
-		if len(out.Build.Targets) == 0 {
-			out.Build.Targets = suggestions.Build.Targets
+		if len(out.Adapter.Build.Targets) == 0 {
+			out.Adapter.Build.Targets = suggestions.Build.Targets
 		}
 	}
-	if suggestions.Version != nil && len(out.Version.Locations) == 0 {
-		out.Version.Locations = suggestions.Version.Locations
+	if suggestions.Version != nil && len(out.Adapter.Version.Locations) == 0 {
+		out.Adapter.Version.Locations = suggestions.Version.Locations
 	}
 	return out
 }

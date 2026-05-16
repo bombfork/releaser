@@ -64,9 +64,9 @@ func runGenerate(repoRoot, actionRef string) error {
 	}
 
 	registry := adapters.DefaultRegistry()
-	ad, ok := registry.ByName(cfg.Adapter)
+	ad, ok := registry.ByName(cfg.Adapter.Type)
 	if !ok {
-		return fmt.Errorf("unknown adapter %q in configuration", cfg.Adapter)
+		return fmt.Errorf("unknown adapter %q in configuration", cfg.Adapter.Type)
 	}
 
 	return generate.Generate(repoRoot, generate.Inputs{

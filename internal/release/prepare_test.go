@@ -131,11 +131,13 @@ func TestPrepare_CreatesPendingReleasePRAndBranchOnFirstRun(t *testing.T) {
 	upstream, local := initPrepareFixture(t)
 
 	cfg := config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "true", Artifacts: "dist/*"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 	}
 
 	httpClient, counters := buildPrepareMock(t)
@@ -194,11 +196,13 @@ func TestPrepare_UpdatesExistingPROnRerun(t *testing.T) {
 
 	upstream, local := initPrepareFixture(t)
 	cfg := config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "true", Artifacts: "dist/*"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 	}
 
 	httpClient, counters := buildPrepareMock(t)
@@ -254,11 +258,13 @@ func TestPrepare_BailsWhenReleasePrepCommitAlreadyMerged(t *testing.T) {
 	run(local, "push", "-q", "origin", "main")
 
 	cfg := config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "true", Artifacts: "dist/*"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 	}
 	httpClient, counters := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
@@ -310,11 +316,13 @@ func TestPrepare_NoBumpableCommitsIsNoop(t *testing.T) {
 	run(local, "push", "-q", "origin", "main")
 
 	cfg := config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "true", Artifacts: "dist/*"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 	}
 
 	httpClient, counters := buildPrepareMock(t)

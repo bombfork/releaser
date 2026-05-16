@@ -1,6 +1,6 @@
 // Package golang provides the basic Go-specific adapter, which drives
 // cross-compilation directly with `go build` for the (OS, Arch) pairs
-// listed in cfg.Build.Targets. It auto-detects Go projects by the
+// listed in cfg.Adapter.Build.Targets. It auto-detects Go projects by the
 // presence of go.mod and assumes the project does NOT use goreleaser
 // (the sibling "goreleaser" adapter takes priority when both go.mod
 // and .goreleaser.yaml are present).
@@ -74,6 +74,34 @@ func (*Adapter) Detect(repoRoot string) (bool, error) {
 	return !info.IsDir(), nil
 }
 
+// DefaultTargets is the list of (OS, Arch) pairs used as Build.Targets
+// when the user does not override it.
+var DefaultTargets = []config.BuildTarget{
+	{OS: "linux", Arch: "amd64"},
+	{OS: "linux", Arch: "arm64"},
+	{OS: "darwin", Arch: "amd64"},
+	{OS: "darwin", Arch: "arm64"},
+}
+
+// SchemaInfo describes the go adapter's schema rules for
+// `releaser config schema`.
+func (*Adapter) SchemaInfo() config.AdapterInfo {
+	return config.AdapterInfo{
+		Name: Name,
+		Required: []string{
+			"adapter.build.command",
+			"adapter.build.artifacts",
+			"adapter.build.targets",
+			"adapter.version.locations",
+		},
+		Defaults: map[string]string{
+			"adapter.build.command":   DefaultBuildCommand,
+			"adapter.build.artifacts": DefaultArtifacts,
+			"adapter.build.targets":   config.RenderYAMLDefault(DefaultTargets),
+		},
+	}
+}
+
 // SuggestDefaults supplies the build command, artifact glob, and
 // initial target list the basic Go adapter assumes by default. The
 // user can override any of these in the configuration; the rest are
@@ -88,12 +116,7 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 		Build: &config.Build{
 			Command:   DefaultBuildCommand,
 			Artifacts: DefaultArtifacts,
-			Targets: []config.BuildTarget{
-				{OS: "linux", Arch: "amd64"},
-				{OS: "linux", Arch: "arm64"},
-				{OS: "darwin", Arch: "amd64"},
-				{OS: "darwin", Arch: "arm64"},
-			},
+			Targets:   append([]config.BuildTarget(nil), DefaultTargets...),
 		},
 	}, nil
 }
@@ -103,21 +126,21 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 // and at least one (OS, Arch) target. Each target must specify both
 // fields.
 func (*Adapter) ValidateConfig(cfg config.Config) error {
-	if cfg.Build.Command == "" {
-		return errors.New("go adapter requires build.command")
+	if cfg.Adapter.Build.Command == "" {
+		return errors.New("go adapter requires adapter.build.command")
 	}
-	if cfg.Build.Artifacts == "" {
-		return errors.New("go adapter requires build.artifacts")
+	if cfg.Adapter.Build.Artifacts == "" {
+		return errors.New("go adapter requires adapter.build.artifacts")
 	}
-	if len(cfg.Version.Locations) == 0 {
-		return errors.New("go adapter requires at least one version.locations entry")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return errors.New("go adapter requires at least one adapter.version.locations entry")
 	}
-	if len(cfg.Build.Targets) == 0 {
-		return errors.New("go adapter requires at least one build.targets entry (os/arch)")
+	if len(cfg.Adapter.Build.Targets) == 0 {
+		return errors.New("go adapter requires at least one adapter.build.targets entry (os/arch)")
 	}
-	for i, t := range cfg.Build.Targets {
+	for i, t := range cfg.Adapter.Build.Targets {
 		if t.OS == "" || t.Arch == "" {
-			return fmt.Errorf("build.targets[%d] requires both os and arch", i)
+			return fmt.Errorf("adapter.build.targets[%d] requires both os and arch", i)
 		}
 	}
 	return nil
@@ -140,11 +163,11 @@ func (*Adapter) WorkflowSnippets(_ config.Config) adapter.Snippets {
 // build command consumes this variable directly; user-supplied build
 // commands can do the same.
 func (*Adapter) BuildEnv(cfg config.Config) map[string]string {
-	if len(cfg.Build.Targets) == 0 {
+	if len(cfg.Adapter.Build.Targets) == 0 {
 		return nil
 	}
-	parts := make([]string, 0, len(cfg.Build.Targets))
-	for _, t := range cfg.Build.Targets {
+	parts := make([]string, 0, len(cfg.Adapter.Build.Targets))
+	for _, t := range cfg.Adapter.Build.Targets {
 		parts = append(parts, t.OS+"/"+t.Arch)
 	}
 	return map[string]string{"RELEASER_GO_TARGETS": strings.Join(parts, " ")}
@@ -154,10 +177,10 @@ func (*Adapter) BuildEnv(cfg config.Config) map[string]string {
 // configured version.locations entry. Mirrors the generic adapter's
 // implementation.
 func (*Adapter) ReadVersion(repoRoot string, cfg config.Config) (string, error) {
-	if len(cfg.Version.Locations) == 0 {
-		return "", errors.New("no version.locations configured")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return "", errors.New("no adapter.version.locations configured")
 	}
-	loc := cfg.Version.Locations[0]
+	loc := cfg.Adapter.Version.Locations[0]
 	pattern := loc.Regex
 	if !strings.HasPrefix(pattern, "(?") {
 		pattern = "(?m)" + pattern

@@ -20,30 +20,31 @@ func TestPath_JoinsRepoRootWithDefaultFilePath(t *testing.T) {
 
 func TestLoad_HappyPath(t *testing.T) {
 	repo := t.TempDir()
-	writeConfig(t, repo, `adapter: generic
-build:
-  command: make build
-  artifacts: dist/*
-version:
-  locations:
-    - path: Makefile
-      regex: '^VERSION := (.*)$'
+	writeConfig(t, repo, `adapter:
+  type: generic
+  build:
+    command: make build
+    artifacts: dist/*
+  version:
+    locations:
+      - path: Makefile
+        regex: '^VERSION := (.*)$'
 `)
 
 	cfg, err := config.Load(repo)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Adapter != "generic" {
-		t.Errorf("adapter = %q, want %q", cfg.Adapter, "generic")
+	if cfg.Adapter.Type != "generic" {
+		t.Errorf("adapter.type = %q, want %q", cfg.Adapter.Type, "generic")
 	}
-	if cfg.Build.Command != "make build" {
-		t.Errorf("build.command = %q, want %q", cfg.Build.Command, "make build")
+	if cfg.Adapter.Build.Command != "make build" {
+		t.Errorf("build.command = %q, want %q", cfg.Adapter.Build.Command, "make build")
 	}
-	if len(cfg.Version.Locations) != 1 {
-		t.Fatalf("version.locations: got %d, want 1", len(cfg.Version.Locations))
+	if len(cfg.Adapter.Version.Locations) != 1 {
+		t.Fatalf("version.locations: got %d, want 1", len(cfg.Adapter.Version.Locations))
 	}
-	if got := cfg.Version.Locations[0].Path; got != "Makefile" {
+	if got := cfg.Adapter.Version.Locations[0].Path; got != "Makefile" {
 		t.Errorf("version.locations[0].path = %q", got)
 	}
 }
@@ -69,11 +70,13 @@ func TestLoad_MalformedYAMLFails(t *testing.T) {
 func TestSave_WritesToDefaultPathAndCreatesParent(t *testing.T) {
 	repo := t.TempDir()
 	cfg := &config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "make build", Artifacts: "dist/*"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "make build", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 	}
 
 	if err := config.Save(repo, cfg); err != nil {
@@ -93,15 +96,17 @@ func TestSave_WritesToDefaultPathAndCreatesParent(t *testing.T) {
 func TestSave_LoadRoundTrip(t *testing.T) {
 	repo := t.TempDir()
 	original := &config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "go build ./...", Artifacts: "bin/*"},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "go build ./...", Artifacts: "bin/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "version.txt", Regex: `^(.*)$`},
+				{Path: "Cargo.toml", Regex: `^version = "(.*)"$`},
+			}},
+		},
 		Commit: config.Commit{Conventions: map[string]config.BumpLevel{
 			"deps": config.BumpPatch,
 			"perf": config.BumpMinor,
-		}},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "version.txt", Regex: `^(.*)$`},
-			{Path: "Cargo.toml", Regex: `^version = "(.*)"$`},
 		}},
 		Workflows: config.Workflows{
 			PendingReleaseFile: "prep.yml",
@@ -117,21 +122,21 @@ func TestSave_LoadRoundTrip(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 
-	if loaded.Adapter != original.Adapter {
-		t.Errorf("adapter: %q != %q", loaded.Adapter, original.Adapter)
+	if loaded.Adapter.Type != original.Adapter.Type {
+		t.Errorf("adapter.type: %q != %q", loaded.Adapter.Type, original.Adapter.Type)
 	}
-	if !reflect.DeepEqual(loaded.Build, original.Build) {
-		t.Errorf("build: %+v != %+v", loaded.Build, original.Build)
+	if !reflect.DeepEqual(loaded.Adapter.Build, original.Adapter.Build) {
+		t.Errorf("build: %+v != %+v", loaded.Adapter.Build, original.Adapter.Build)
 	}
 	if loaded.Workflows != original.Workflows {
 		t.Errorf("workflows: %+v != %+v", loaded.Workflows, original.Workflows)
 	}
-	if len(loaded.Version.Locations) != len(original.Version.Locations) {
-		t.Fatalf("version.locations length: %d != %d", len(loaded.Version.Locations), len(original.Version.Locations))
+	if len(loaded.Adapter.Version.Locations) != len(original.Adapter.Version.Locations) {
+		t.Fatalf("version.locations length: %d != %d", len(loaded.Adapter.Version.Locations), len(original.Adapter.Version.Locations))
 	}
-	for i, want := range original.Version.Locations {
-		if loaded.Version.Locations[i] != want {
-			t.Errorf("version.locations[%d]: %+v != %+v", i, loaded.Version.Locations[i], want)
+	for i, want := range original.Adapter.Version.Locations {
+		if loaded.Adapter.Version.Locations[i] != want {
+			t.Errorf("version.locations[%d]: %+v != %+v", i, loaded.Adapter.Version.Locations[i], want)
 		}
 	}
 	for k, want := range original.Commit.Conventions {
@@ -143,7 +148,7 @@ func TestSave_LoadRoundTrip(t *testing.T) {
 
 func TestSave_NoOrphanTempFile(t *testing.T) {
 	repo := t.TempDir()
-	cfg := &config.Config{Adapter: "generic"}
+	cfg := &config.Config{Adapter: config.Adapter{Type: "generic"}}
 	if err := config.Save(repo, cfg); err != nil {
 		t.Fatalf("Save: %v", err)
 	}

@@ -11,14 +11,16 @@ import (
 // sampleConfig returns a fully populated Config for path tests.
 func sampleConfig() *config.Config {
 	return &config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "make build", Artifacts: "dist/*"},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "make build", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 		Commit: config.Commit{Conventions: map[string]config.BumpLevel{
 			"deps": config.BumpPatch,
 			"perf": config.BumpMinor,
-		}},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 		}},
 		Workflows: config.Workflows{
 			PendingReleaseFile: "prep.yml",
@@ -30,9 +32,9 @@ func sampleConfig() *config.Config {
 func TestGet_ScalarString(t *testing.T) {
 	c := sampleConfig()
 	tests := map[string]string{
-		"adapter":                        "generic",
-		"build.command":                  "make build",
-		"build.artifacts":                "dist/*",
+		"adapter.type":                   "generic",
+		"adapter.build.command":          "make build",
+		"adapter.build.artifacts":        "dist/*",
 		"workflows.pending_release_file": "prep.yml",
 		"workflows.publish_file":         "ship.yml",
 	}
@@ -73,7 +75,7 @@ func TestGet_WholeMapAsYAML(t *testing.T) {
 
 func TestGet_WholeSliceAsYAML(t *testing.T) {
 	c := sampleConfig()
-	got, err := c.Get("version.locations")
+	got, err := c.Get("adapter.version.locations")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestGet_WholeSliceAsYAML(t *testing.T) {
 
 func TestGet_StructAsYAML(t *testing.T) {
 	c := sampleConfig()
-	got, err := c.Get("build")
+	got, err := c.Get("adapter.build")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -103,7 +105,7 @@ func TestGet_UnknownKeyReturnsErrUnknownKey(t *testing.T) {
 	c := sampleConfig()
 	tests := []string{
 		"nope",
-		"build.nope",
+		"adapter.build.nope",
 		"commit.conventions.nope",
 	}
 	for _, k := range tests {
@@ -120,7 +122,7 @@ func TestGet_UnknownKeyReturnsErrUnknownKey(t *testing.T) {
 
 func TestGet_SliceIndexAddressingRejected(t *testing.T) {
 	c := sampleConfig()
-	_, err := c.Get("version.locations.0.path")
+	_, err := c.Get("adapter.version.locations.0.path")
 	if err == nil {
 		t.Fatal("expected error for slice index addressing")
 	}
@@ -138,11 +140,11 @@ func TestGet_EmptyKeyFails(t *testing.T) {
 
 func TestSet_ScalarString(t *testing.T) {
 	c := sampleConfig()
-	if err := c.Set("build.command", "make all"); err != nil {
+	if err := c.Set("adapter.build.command", "make all"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if c.Build.Command != "make all" {
-		t.Errorf("build.command = %q, want %q", c.Build.Command, "make all")
+	if c.Adapter.Build.Command != "make all" {
+		t.Errorf("adapter.build.command = %q, want %q", c.Adapter.Build.Command, "make all")
 	}
 }
 
@@ -161,16 +163,16 @@ func TestSet_AcceptsEmptyValue(t *testing.T) {
 	// scalar must succeed; the CLI layer is responsible for running
 	// ValidateConfig afterwards and rolling back if needed.
 	c := sampleConfig()
-	if err := c.Set("build.command", ""); err != nil {
+	if err := c.Set("adapter.build.command", ""); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if c.Build.Command != "" {
-		t.Errorf("build.command = %q, want empty", c.Build.Command)
+	if c.Adapter.Build.Command != "" {
+		t.Errorf("adapter.build.command = %q, want empty", c.Adapter.Build.Command)
 	}
 }
 
 func TestSet_NewMapEntryInitializesNilMap(t *testing.T) {
-	c := &config.Config{Adapter: "generic"} // Commit.Conventions is nil
+	c := &config.Config{Adapter: config.Adapter{Type: "generic"}} // Commit.Conventions is nil
 	if err := c.Set("commit.conventions.deps", "patch"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -192,7 +194,7 @@ func TestSet_OverwritesExistingMapEntry(t *testing.T) {
 
 func TestSet_UnknownKeyReturnsErrUnknownKey(t *testing.T) {
 	c := sampleConfig()
-	err := c.Set("build.nope", "x")
+	err := c.Set("adapter.build.nope", "x")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -203,7 +205,7 @@ func TestSet_UnknownKeyReturnsErrUnknownKey(t *testing.T) {
 
 func TestSet_WholeSliceFieldReturnsErrUnsettableKey(t *testing.T) {
 	c := sampleConfig()
-	err := c.Set("version.locations", "anything")
+	err := c.Set("adapter.version.locations", "anything")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -214,7 +216,7 @@ func TestSet_WholeSliceFieldReturnsErrUnsettableKey(t *testing.T) {
 
 func TestSet_SliceIndexAddressingRejected(t *testing.T) {
 	c := sampleConfig()
-	err := c.Set("version.locations.0.path", "Other")
+	err := c.Set("adapter.version.locations.0.path", "Other")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -238,19 +240,19 @@ func TestSet_WholeMapFieldRejected(t *testing.T) {
 
 func TestSet_RoundTripsViaGet(t *testing.T) {
 	c := &config.Config{}
-	if err := c.Set("adapter", "generic"); err != nil {
-		t.Fatalf("Set adapter: %v", err)
+	if err := c.Set("adapter.type", "generic"); err != nil {
+		t.Fatalf("Set adapter.type: %v", err)
 	}
-	if err := c.Set("build.command", "go build ./..."); err != nil {
-		t.Fatalf("Set build.command: %v", err)
+	if err := c.Set("adapter.build.command", "go build ./..."); err != nil {
+		t.Fatalf("Set adapter.build.command: %v", err)
 	}
 	if err := c.Set("commit.conventions.deps", "patch"); err != nil {
 		t.Fatalf("Set commit.conventions.deps: %v", err)
 	}
 
 	for key, want := range map[string]string{
-		"adapter":                 "generic",
-		"build.command":           "go build ./...",
+		"adapter.type":            "generic",
+		"adapter.build.command":   "go build ./...",
 		"commit.conventions.deps": "patch",
 	} {
 		got, err := c.Get(key)

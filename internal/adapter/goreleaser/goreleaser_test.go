@@ -123,9 +123,11 @@ func TestSuggestDefaults_ProvidesBuildAndArtifacts(t *testing.T) {
 
 func TestValidateConfig_RequiresBuildCommand(t *testing.T) {
 	cfg := config.Config{
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
-		}},
+		Adapter: config.Adapter{
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
+			}},
+		},
 	}
 	if err := goreleaser.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when build.command is empty")
@@ -133,7 +135,7 @@ func TestValidateConfig_RequiresBuildCommand(t *testing.T) {
 }
 
 func TestValidateConfig_RequiresVersionLocation(t *testing.T) {
-	cfg := config.Config{Build: config.Build{Command: "goreleaser release"}}
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{Command: "goreleaser release"}}}
 	if err := goreleaser.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when version.locations is empty")
 	}
@@ -141,10 +143,12 @@ func TestValidateConfig_RequiresVersionLocation(t *testing.T) {
 
 func TestValidateConfig_Happy(t *testing.T) {
 	cfg := config.Config{
-		Build: config.Build{Command: "goreleaser release"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
-		}},
+		Adapter: config.Adapter{
+			Build: config.Build{Command: "goreleaser release"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
+			}},
+		},
 	}
 	if err := goreleaser.New().ValidateConfig(cfg); err != nil {
 		t.Errorf("ValidateConfig: %v", err)
@@ -177,9 +181,9 @@ func TestBuildEnv_Empty(t *testing.T) {
 func TestReadVersion_FromConstantInSource(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "internal/cli/root.go"), "package cli\n\nvar Version = \"1.2.3\"\n")
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "internal/cli/root.go", Regex: `^var Version = "(.*)"$`},
-	}}}
+	}}}}
 
 	got, err := goreleaser.New().ReadVersion(repo, cfg)
 	if err != nil {
@@ -191,9 +195,9 @@ func TestReadVersion_FromConstantInSource(t *testing.T) {
 }
 
 func TestReadVersion_MissingFile(t *testing.T) {
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "doesnotexist", Regex: `^(.+)$`},
-	}}}
+	}}}}
 	_, err := goreleaser.New().ReadVersion(t.TempDir(), cfg)
 	if err == nil {
 		t.Fatal("expected error for missing file")
@@ -207,5 +211,32 @@ func TestReadVersion_NoLocations(t *testing.T) {
 	_, err := goreleaser.New().ReadVersion(t.TempDir(), config.Config{})
 	if err == nil {
 		t.Error("expected error when no version.locations configured")
+	}
+}
+
+func TestSchemaInfo_AgreesWithValidateConfig(t *testing.T) {
+	info := goreleaser.New().SchemaInfo()
+	if info.Name != "goreleaser" {
+		t.Errorf("Name = %q, want %q", info.Name, "goreleaser")
+	}
+	wantRequired := map[string]bool{
+		"adapter.build.command":     false,
+		"adapter.version.locations": false,
+	}
+	for _, p := range info.Required {
+		if _, ok := wantRequired[p]; ok {
+			wantRequired[p] = true
+		}
+	}
+	for p, seen := range wantRequired {
+		if !seen {
+			t.Errorf("SchemaInfo.Required missing %q", p)
+		}
+	}
+	// goreleaser explicitly does NOT require targets.
+	for _, p := range info.Required {
+		if p == "adapter.build.targets" {
+			t.Errorf("SchemaInfo.Required should not include adapter.build.targets (goreleaser owns its own matrix)")
+		}
 	}
 }

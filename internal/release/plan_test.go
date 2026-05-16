@@ -13,7 +13,7 @@ func TestBuildPlan_InitialReleaseWithFeat(t *testing.T) {
 	repo := t.TempDir()
 	initGitRepo(t, repo, "feat: initial implementation")
 
-	plan, err := release.BuildPlan(repo, config.Config{Adapter: "generic"}, generic.New())
+	plan, err := release.BuildPlan(repo, config.Config{Adapter: config.Adapter{Type: "generic"}}, generic.New())
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestBuildPlan_AfterTagWithMixedCommits(t *testing.T) {
 		gitCommit(t, repo, s)
 	}
 
-	plan, err := release.BuildPlan(repo, config.Config{Adapter: "generic"}, generic.New())
+	plan, err := release.BuildPlan(repo, config.Config{Adapter: config.Adapter{Type: "generic"}}, generic.New())
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestBuildPlan_NoBumpableCommits(t *testing.T) {
 	gitCommit(t, repo, "chore: tidy")
 	gitCommit(t, repo, "docs: readme")
 
-	plan, err := release.BuildPlan(repo, config.Config{Adapter: "generic"}, generic.New())
+	plan, err := release.BuildPlan(repo, config.Config{Adapter: config.Adapter{Type: "generic"}}, generic.New())
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestBuildPlan_NoBumpableCommits(t *testing.T) {
 func TestPlan_StringMentionsVersion(t *testing.T) {
 	repo := t.TempDir()
 	initGitRepo(t, repo, "feat: implement")
-	plan, err := release.BuildPlan(repo, config.Config{Adapter: "generic"}, generic.New())
+	plan, err := release.BuildPlan(repo, config.Config{Adapter: config.Adapter{Type: "generic"}}, generic.New())
 	if err != nil {
 		t.Fatalf("BuildPlan: %v", err)
 	}

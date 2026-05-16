@@ -36,7 +36,7 @@ func TestPublish_DryRunCreatesNothingAndDoesNotBuild(t *testing.T) {
 	// Use a build command that leaves a sentinel file. If the dry-run
 	// ran the command, the sentinel will exist.
 	sentinel := filepath.Join(repo, "BUILD_RAN")
-	cfg.Build.Command = "touch " + sentinel
+	cfg.Adapter.Build.Command = "touch " + sentinel
 
 	ghClient := releasergh.NewClient(httpClient)
 	tp := &fakeTokenProvider{token: "ghs_test"}

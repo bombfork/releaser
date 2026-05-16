@@ -12,9 +12,9 @@ import (
 	"github.com/bombfork/releaser/internal/config"
 )
 
-// RunBuild executes cfg.Build.Command via `sh -c` with cwd=repoRoot,
+// RunBuild executes cfg.Adapter.Build.Command via `sh -c` with cwd=repoRoot,
 // streaming stdout and stderr to the provided writers. After the command
-// returns successfully, cfg.Build.Artifacts is resolved as a glob
+// returns successfully, cfg.Adapter.Build.Artifacts is resolved as a glob
 // relative to repoRoot and the matching file paths are returned in
 // sorted order (directories are filtered out).
 //
@@ -30,10 +30,10 @@ import (
 // An empty artifact list is treated as an error: producing zero files to
 // attach is almost always a misconfiguration.
 func RunBuild(repoRoot string, cfg config.Config, extraEnv map[string]string, stdout, stderr io.Writer) ([]string, error) {
-	if cfg.Build.Command == "" {
+	if cfg.Adapter.Build.Command == "" {
 		return nil, errors.New("no build.command configured")
 	}
-	if cfg.Build.Artifacts == "" {
+	if cfg.Adapter.Build.Artifacts == "" {
 		return nil, errors.New("no build.artifacts configured")
 	}
 	if stdout == nil {
@@ -43,8 +43,8 @@ func RunBuild(repoRoot string, cfg config.Config, extraEnv map[string]string, st
 		stderr = io.Discard
 	}
 
-	// #nosec G204 -- cfg.Build.Command is supplied by the project's own configuration file.
-	cmd := exec.Command("sh", "-c", cfg.Build.Command)
+	// #nosec G204 -- the build command comes from the project's own configuration file.
+	cmd := exec.Command("sh", "-c", cfg.Adapter.Build.Command)
 	cmd.Dir = repoRoot
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -59,12 +59,12 @@ func RunBuild(repoRoot string, cfg config.Config, extraEnv map[string]string, st
 		return nil, fmt.Errorf("build command failed: %w", err)
 	}
 
-	artifacts, err := resolveArtifacts(repoRoot, cfg.Build.Artifacts)
+	artifacts, err := resolveArtifacts(repoRoot, cfg.Adapter.Build.Artifacts)
 	if err != nil {
 		return nil, err
 	}
 	if len(artifacts) == 0 {
-		return nil, fmt.Errorf("build artifacts glob %q matched no files", cfg.Build.Artifacts)
+		return nil, fmt.Errorf("build artifacts glob %q matched no files", cfg.Adapter.Build.Artifacts)
 	}
 	return artifacts, nil
 }
