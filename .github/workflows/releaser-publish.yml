@@ -39,7 +39,7 @@ jobs:
         with:
           go-version: stable
       - name: Publish release
-        uses: bombfork/releaser@v0.5.0
+        uses: bombfork/releaser@v0.6.0
         with:
           command: release publish ${{ inputs.dry_run && '--dry-run' || '' }}
           app-id: ${{ vars.RELEASER_APP_ID }}

@@ -5,7 +5,7 @@ import (
 )
 
 // Version is set at build time via -ldflags "-X github.com/bombfork/releaser/internal/cli.Version=...".
-var Version = "0.5.0"
+var Version = "0.6.0"
 
 // RepoRootFlag is the name of the persistent flag that points at the
 // repository root the releaser operates on. Subcommands read it via
