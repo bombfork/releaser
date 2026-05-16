@@ -243,3 +243,31 @@ func TestReadVersion_NoLocations(t *testing.T) {
 		t.Error("expected error when no version.locations configured")
 	}
 }
+
+func TestSchemaInfo_AgreesWithValidateConfig(t *testing.T) {
+	info := golang.New().SchemaInfo()
+	if info.Name != "go" {
+		t.Errorf("Name = %q, want %q", info.Name, "go")
+	}
+	wantRequired := map[string]bool{
+		"adapter.build.command":     false,
+		"adapter.build.artifacts":   false,
+		"adapter.build.targets":     false,
+		"adapter.version.locations": false,
+	}
+	for _, p := range info.Required {
+		if _, ok := wantRequired[p]; ok {
+			wantRequired[p] = true
+		}
+	}
+	for p, seen := range wantRequired {
+		if !seen {
+			t.Errorf("SchemaInfo.Required missing %q", p)
+		}
+	}
+	for _, p := range []string{"adapter.build.command", "adapter.build.artifacts", "adapter.build.targets"} {
+		if _, ok := info.Defaults[p]; !ok {
+			t.Errorf("SchemaInfo.Defaults missing %q", p)
+		}
+	}
+}

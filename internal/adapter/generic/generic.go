@@ -34,6 +34,18 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 	return config.Suggestions{}, nil
 }
 
+// SchemaInfo describes the generic adapter's schema rules for
+// `releaser config schema`.
+func (*Adapter) SchemaInfo() config.AdapterInfo {
+	return config.AdapterInfo{
+		Name: Name,
+		Required: []string{
+			"adapter.build.command",
+			"adapter.version.locations",
+		},
+	}
+}
+
 // ValidateConfig enforces the minimum information the generic adapter needs
 // to drive a release: a build command and at least one version location.
 func (*Adapter) ValidateConfig(cfg config.Config) error {

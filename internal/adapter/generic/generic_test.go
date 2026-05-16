@@ -137,3 +137,24 @@ func TestReadVersion_RejectsZeroOrMultipleCaptureGroups(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaInfo_AgreesWithValidateConfig(t *testing.T) {
+	info := generic.New().SchemaInfo()
+	if info.Name != "generic" {
+		t.Errorf("Name = %q, want %q", info.Name, "generic")
+	}
+	wantRequired := map[string]bool{
+		"adapter.build.command":     false,
+		"adapter.version.locations": false,
+	}
+	for _, p := range info.Required {
+		if _, ok := wantRequired[p]; ok {
+			wantRequired[p] = true
+		}
+	}
+	for p, seen := range wantRequired {
+		if !seen {
+			t.Errorf("SchemaInfo.Required missing %q (ValidateConfig enforces it)", p)
+		}
+	}
+}

@@ -74,6 +74,34 @@ func (*Adapter) Detect(repoRoot string) (bool, error) {
 	return !info.IsDir(), nil
 }
 
+// DefaultTargets is the list of (OS, Arch) pairs used as Build.Targets
+// when the user does not override it.
+var DefaultTargets = []config.BuildTarget{
+	{OS: "linux", Arch: "amd64"},
+	{OS: "linux", Arch: "arm64"},
+	{OS: "darwin", Arch: "amd64"},
+	{OS: "darwin", Arch: "arm64"},
+}
+
+// SchemaInfo describes the go adapter's schema rules for
+// `releaser config schema`.
+func (*Adapter) SchemaInfo() config.AdapterInfo {
+	return config.AdapterInfo{
+		Name: Name,
+		Required: []string{
+			"adapter.build.command",
+			"adapter.build.artifacts",
+			"adapter.build.targets",
+			"adapter.version.locations",
+		},
+		Defaults: map[string]string{
+			"adapter.build.command":   DefaultBuildCommand,
+			"adapter.build.artifacts": DefaultArtifacts,
+			"adapter.build.targets":   config.RenderYAMLDefault(DefaultTargets),
+		},
+	}
+}
+
 // SuggestDefaults supplies the build command, artifact glob, and
 // initial target list the basic Go adapter assumes by default. The
 // user can override any of these in the configuration; the rest are
@@ -88,12 +116,7 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 		Build: &config.Build{
 			Command:   DefaultBuildCommand,
 			Artifacts: DefaultArtifacts,
-			Targets: []config.BuildTarget{
-				{OS: "linux", Arch: "amd64"},
-				{OS: "linux", Arch: "arm64"},
-				{OS: "darwin", Arch: "amd64"},
-				{OS: "darwin", Arch: "arm64"},
-			},
+			Targets:   append([]config.BuildTarget(nil), DefaultTargets...),
 		},
 	}, nil
 }

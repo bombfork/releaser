@@ -33,6 +33,7 @@ For scalar edits, prefer the get/set subcommands.`,
 	cmd.AddCommand(
 		newConfigGetCommand(),
 		newConfigSetCommand(),
+		newConfigSchemaCommand(),
 	)
 
 	return cmd

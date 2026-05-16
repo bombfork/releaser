@@ -25,6 +25,16 @@ import (
 // Name is the value stored in the configuration's adapter field.
 const Name = "goreleaser"
 
+// DefaultBuildCommand is the shell command used as Build.Command when
+// the user does not override it. It threads RELEASER_TAG into
+// GoReleaser via GORELEASER_CURRENT_TAG and skips both publish and
+// validate steps (the engine owns release creation and tag handling).
+const DefaultBuildCommand = `GORELEASER_CURRENT_TAG="$RELEASER_TAG" goreleaser release --skip=publish,validate --clean`
+
+// DefaultArtifacts is the artifact glob used as Build.Artifacts when
+// the user does not override it.
+const DefaultArtifacts = "dist/*.tar.gz"
+
 // Adapter is the GoReleaser implementation of adapter.Adapter.
 type Adapter struct{}
 
@@ -63,10 +73,26 @@ func (*Adapter) Detect(repoRoot string) (bool, error) {
 func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 	return config.Suggestions{
 		Build: &config.Build{
-			Command:   `GORELEASER_CURRENT_TAG="$RELEASER_TAG" goreleaser release --skip=publish,validate --clean`,
-			Artifacts: "dist/*.tar.gz",
+			Command:   DefaultBuildCommand,
+			Artifacts: DefaultArtifacts,
 		},
 	}, nil
+}
+
+// SchemaInfo describes the goreleaser adapter's schema rules for
+// `releaser config schema`.
+func (*Adapter) SchemaInfo() config.AdapterInfo {
+	return config.AdapterInfo{
+		Name: Name,
+		Required: []string{
+			"adapter.build.command",
+			"adapter.version.locations",
+		},
+		Defaults: map[string]string{
+			"adapter.build.command":   DefaultBuildCommand,
+			"adapter.build.artifacts": DefaultArtifacts,
+		},
+	}
 }
 
 // ValidateConfig enforces the minimum information the goreleaser

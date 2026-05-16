@@ -213,3 +213,30 @@ func TestReadVersion_NoLocations(t *testing.T) {
 		t.Error("expected error when no version.locations configured")
 	}
 }
+
+func TestSchemaInfo_AgreesWithValidateConfig(t *testing.T) {
+	info := goreleaser.New().SchemaInfo()
+	if info.Name != "goreleaser" {
+		t.Errorf("Name = %q, want %q", info.Name, "goreleaser")
+	}
+	wantRequired := map[string]bool{
+		"adapter.build.command":     false,
+		"adapter.version.locations": false,
+	}
+	for _, p := range info.Required {
+		if _, ok := wantRequired[p]; ok {
+			wantRequired[p] = true
+		}
+	}
+	for p, seen := range wantRequired {
+		if !seen {
+			t.Errorf("SchemaInfo.Required missing %q", p)
+		}
+	}
+	// goreleaser explicitly does NOT require targets.
+	for _, p := range info.Required {
+		if p == "adapter.build.targets" {
+			t.Errorf("SchemaInfo.Required should not include adapter.build.targets (goreleaser owns its own matrix)")
+		}
+	}
+}
