@@ -39,7 +39,7 @@ jobs:
         with:
           go-version: stable
       - name: Publish release
-        uses: bombfork/releaser@v0.4.0
+        uses: bombfork/releaser@v0.5.0
         with:
           command: release publish ${{ inputs.dry_run && '--dry-run' || '' }}
           github-token: ${{ github.token }}
