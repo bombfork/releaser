@@ -3,6 +3,9 @@ go = "latest"
 golangci-lint = "latest"
 gotestsum = "latest"
 
+[env]
+_.file = ".env.yaml"
+
 [tasks.build]
 description = "build the releaser binary"
 run = "go build -C cmd -o ../releaser"

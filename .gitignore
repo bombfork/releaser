@@ -23,3 +23,6 @@ go.work.sum
 
 # Claude dotfolder
 .claude/
+
+# dotenv
+.env.yaml
