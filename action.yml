@@ -53,7 +53,7 @@ runs:
 
     - name: Restore releaser binary from cache
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ${{ runner.tool_cache }}/releaser/${{ steps.version.outputs.version }}
         key: releaser-${{ steps.version.outputs.version }}-${{ steps.platform.outputs.os }}-${{ steps.platform.outputs.arch }}

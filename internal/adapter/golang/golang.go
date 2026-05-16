@@ -89,7 +89,7 @@ func (*Adapter) ValidateConfig(cfg config.Config) error {
 func (*Adapter) WorkflowSnippets(_ config.Config) adapter.Snippets {
 	return adapter.Snippets{
 		SetupSteps: []string{
-			"- uses: actions/setup-go@v5\n  with:\n    go-version: stable",
+			"- uses: actions/setup-go@v6\n  with:\n    go-version: stable",
 			"- uses: goreleaser/goreleaser-action@v6\n  with:\n    install-only: true\n    version: latest",
 		},
 	}

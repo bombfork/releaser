@@ -42,4 +42,4 @@ jobs:
         uses: bombfork/releaser@<< .ActionRef >>
         with:
           command: release publish ${{ inputs.dry_run && '--dry-run' || '' }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
