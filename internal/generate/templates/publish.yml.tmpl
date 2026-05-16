@@ -42,4 +42,6 @@ jobs:
         uses: bombfork/releaser@<< .ActionRef >>
         with:
           command: release publish ${{ inputs.dry_run && '--dry-run' || '' }}
-          github-token: ${{ github.token }}
+          app-id: ${{ vars.RELEASER_APP_ID }}
+          app-installation-id: ${{ vars.RELEASER_APP_INSTALLATION_ID }}
+          app-private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}

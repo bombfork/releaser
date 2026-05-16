@@ -6,10 +6,15 @@ inputs:
   command:
     description: Releaser subcommand to invoke (e.g. "release", "release --dry-run").
     required: true
-  github-token:
-    description: GitHub token used by the CLI to interact with the GitHub API.
+  app-id:
+    description: GitHub App ID. The App must be installed on the target repository with contents:write, pull-requests:write, and (when generated workflows are version-bumped) workflows:write installation permissions.
     required: true
-    default: ${{ github.token }}
+  app-installation-id:
+    description: GitHub App installation ID for the target repository.
+    required: true
+  app-private-key:
+    description: GitHub App private key in PEM format. Pass via a secret.
+    required: true
   working-directory:
     description: Directory in which to run the releaser command.
     required: false
@@ -81,7 +86,9 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GH_TKN_APP_ID: ${{ inputs.app-id }}
+        GH_TKN_APP_INST_ID: ${{ inputs.app-installation-id }}
+        GH_TKN_APP_PRIVATE_KEY: ${{ inputs.app-private-key }}
         RELEASER_BIN: ${{ runner.tool_cache }}/releaser/${{ steps.version.outputs.version }}/releaser
         RELEASER_ARGS: ${{ inputs.command }}
       run: |
