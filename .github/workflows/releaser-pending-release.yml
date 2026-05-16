@@ -34,7 +34,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Maintain pending-release pull request
-        uses: bombfork/releaser@v0.0.2
+        uses: bombfork/releaser@v0.1.1
         with:
           command: release prepare ${{ inputs.dry_run && '--dry-run' || '' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}

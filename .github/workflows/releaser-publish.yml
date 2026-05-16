@@ -41,7 +41,7 @@ jobs:
       - name: Install build toolchain via mise (go, goreleaser, …)
         uses: jdx/mise-action@v2
       - name: Publish release
-        uses: bombfork/releaser@v0.0.2
+        uses: bombfork/releaser@v0.1.1
         with:
           command: release publish ${{ inputs.dry_run && '--dry-run' || '' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
