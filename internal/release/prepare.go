@@ -136,6 +136,22 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 		return nil
 	}
 
+	// Invariant: if any commit since the latest tag is a release-prep
+	// bump (the subject format Prepare itself produces), a bump PR
+	// has already been merged into the default branch — Publish is
+	// either running concurrently or has just completed. Opening
+	// another PR for the same version is the duplicate-PR bug
+	// described in issue #6. Bail out; the next push after publish
+	// lands will see a fresh latest tag and behave correctly.
+	if containsReleasePrepareCommit(plan.Commits) {
+		if in.DryRun {
+			if _, werr := fmt.Fprintln(out, "Plan includes a chore(release): prepare commit; publish is in flight. prepare would be a no-op."); werr != nil {
+				return werr
+			}
+		}
+		return nil
+	}
+
 	release := in.Config.Release.WithDefaults()
 	branchName := release.BranchName
 	title := fmt.Sprintf("chore(release): v%s", plan.NextVersion)
@@ -182,6 +198,20 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 		return fmt.Errorf("update pending-release PR: %w", err)
 	}
 	return nil
+}
+
+// containsReleasePrepareCommit reports whether any commit in the slice
+// has the subject Prepare uses for its own version-bump commits. The
+// presence of one in the commits-since-tag set means a release-prep PR
+// has already been merged; Publish is taking over (or has completed)
+// and Prepare should stand down to avoid the duplicate-PR bug (#6).
+func containsReleasePrepareCommit(commits []ParsedCommit) bool {
+	for _, c := range commits {
+		if strings.HasPrefix(c.Subject, "chore(release): prepare") {
+			return true
+		}
+	}
+	return false
 }
 
 // describePreparePlan prints what Prepare would do, without performing

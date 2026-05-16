@@ -228,6 +228,60 @@ func TestPrepare_UpdatesExistingPROnRerun(t *testing.T) {
 	}
 }
 
+// Regression for the duplicate-PR bug (issue #6): when the commits
+// since the latest tag include a chore(release): prepare ... commit
+// (a release-prep PR has been merged and Publish is taking over),
+// Prepare must NOT open another PR for the same version.
+func TestPrepare_BailsWhenReleasePrepCommitAlreadyMerged(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+
+	upstream, local := initPrepareFixture(t)
+	// Bump the file on main to simulate a just-merged release-prep PR
+	// whose publish hasn't completed yet (so latest tag is still v0.1.0).
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(local, "Makefile"), []byte("VERSION := 0.2.0\nall:\n"), 0o644); err != nil {
+		t.Fatalf("write bumped Makefile: %v", err)
+	}
+	run(local, "add", "Makefile")
+	run(local, "commit", "-q", "-m", "chore(release): prepare v0.2.0")
+	run(local, "push", "-q", "origin", "main")
+
+	cfg := config.Config{
+		Adapter: "generic",
+		Build:   config.Build{Command: "true", Artifacts: "dist/*"},
+		Version: config.Version{Locations: []config.VersionLocation{
+			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+		}},
+	}
+	httpClient, counters := buildPrepareMock(t)
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_testtoken"}
+
+	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		RemoteURL: upstream,
+	}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	// No PR should have been created or updated — the file is already
+	// at the version the prepare run would propose, indicating publish
+	// is mid-flight.
+	if got := counters.prCreate.Load(); got != 0 {
+		t.Errorf("PR create count = %d, want 0 when publish is in flight", got)
+	}
+	if got := counters.prUpdate.Load(); got != 0 {
+		t.Errorf("PR update count = %d, want 0 when publish is in flight", got)
+	}
+}
+
 func TestPrepare_NoBumpableCommitsIsNoop(t *testing.T) {
 	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
