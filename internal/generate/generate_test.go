@@ -14,7 +14,7 @@ import (
 func TestGenerate_RendersBothWorkflowsAtDefaultNames(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
-		Config:    config.Config{Adapter: "generic"},
+		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
 		Adapter:   generic.New(),
 		ActionRef: "v1.2.3",
 	}
@@ -44,7 +44,7 @@ func TestGenerate_HonorsConfiguredWorkflowNames(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
 		Config: config.Config{
-			Adapter: "generic",
+			Adapter: config.Adapter{Type: "generic"},
 			Workflows: config.Workflows{
 				PendingReleaseFile: "prep.yml",
 				PublishFile:        "ship.yml",
@@ -74,7 +74,7 @@ func TestGenerate_TriggerBranchFromConfig(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
 		Config: config.Config{
-			Adapter: "generic",
+			Adapter: config.Adapter{Type: "generic"},
 			Release: config.Release{DefaultBranch: "trunk"},
 		},
 		Adapter:   generic.New(),
@@ -101,7 +101,7 @@ func TestGenerate_TriggerBranchFromConfig(t *testing.T) {
 func TestGenerate_TriggerBranchDefaultsToMain(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
-		Config:    config.Config{Adapter: "generic"},
+		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
 		Adapter:   generic.New(),
 		ActionRef: "main",
 	}
@@ -123,7 +123,7 @@ func TestGenerate_TriggerBranchDefaultsToMain(t *testing.T) {
 func TestGenerate_BothWorkflowsExposeWorkflowDispatchWithDryRun(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
-		Config:    config.Config{Adapter: "generic"},
+		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
 		Adapter:   generic.New(),
 		ActionRef: "main",
 	}
@@ -151,7 +151,7 @@ func TestGenerate_BothWorkflowsExposeWorkflowDispatchWithDryRun(t *testing.T) {
 func TestGenerate_PublishWorkflowUsesPushNotPullRequest(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
-		Config:    config.Config{Adapter: "generic"},
+		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
 		Adapter:   generic.New(),
 		ActionRef: "main",
 	}
@@ -176,7 +176,7 @@ func TestGenerate_PublishWorkflowUsesPushNotPullRequest(t *testing.T) {
 func TestGenerate_GenericAdapterAddsNoSetupSteps(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
-		Config:    config.Config{Adapter: "generic"},
+		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
 		Adapter:   generic.New(),
 		ActionRef: "main",
 	}

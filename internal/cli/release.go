@@ -188,9 +188,9 @@ func loadConfigAndAdapter(repoRoot string) (*config.Config, adapter.Adapter, err
 		return nil, nil, fmt.Errorf("load configuration: %w", err)
 	}
 	registry := adapters.DefaultRegistry()
-	ad, ok := registry.ByName(cfg.Adapter)
+	ad, ok := registry.ByName(cfg.Adapter.Type)
 	if !ok {
-		return nil, nil, fmt.Errorf("unknown adapter %q in configuration", cfg.Adapter)
+		return nil, nil, fmt.Errorf("unknown adapter %q in configuration", cfg.Adapter.Type)
 	}
 	return cfg, ad, nil
 }

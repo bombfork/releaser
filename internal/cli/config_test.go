@@ -14,7 +14,7 @@ func TestConfig_GetReturnsValueFromConfigFile(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), validConfig)
 
-	r := runCLI(t, "config", "get", "build.command", "--repo-root", repo)
+	r := runCLI(t, "config", "get", "adapter.build.command", "--repo-root", repo)
 	if r.err != nil {
 		t.Fatalf("config get: %v\nstderr: %s", r.err, r.stderr)
 	}
@@ -29,11 +29,11 @@ func TestConfig_SetThenGetRoundTrip(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), validConfig)
 
-	if r := runCLI(t, "config", "set", "build.command", "make all", "--repo-root", repo); r.err != nil {
+	if r := runCLI(t, "config", "set", "adapter.build.command", "make all", "--repo-root", repo); r.err != nil {
 		t.Fatalf("config set: %v\nstderr: %s", r.err, r.stderr)
 	}
 
-	r := runCLI(t, "config", "get", "build.command", "--repo-root", repo)
+	r := runCLI(t, "config", "get", "adapter.build.command", "--repo-root", repo)
 	if r.err != nil {
 		t.Fatalf("config get: %v\nstderr: %s", r.err, r.stderr)
 	}
@@ -62,13 +62,13 @@ func TestConfig_SetRejectsInvalidValue(t *testing.T) {
 	cfgPath := filepath.Join(repo, config.DefaultFilePath)
 	writeFile(t, cfgPath, validConfig)
 
-	r := runCLI(t, "config", "set", "build.command", "", "--repo-root", repo)
+	r := runCLI(t, "config", "set", "adapter.build.command", "", "--repo-root", repo)
 	if r.err == nil {
 		t.Fatal("expected config set to fail when value violates adapter validation")
 	}
 
 	// File must still be readable and contain the original value.
-	if r := runCLI(t, "config", "get", "build.command", "--repo-root", repo); r.err != nil {
+	if r := runCLI(t, "config", "get", "adapter.build.command", "--repo-root", repo); r.err != nil {
 		t.Fatalf("config get after failed set: %v", r.err)
 	} else if got := strings.TrimSpace(r.stdout); got != "make build" {
 		t.Errorf("config was corrupted: build.command = %q", got)

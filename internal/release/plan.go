@@ -57,7 +57,7 @@ func BuildPlanFromRef(repoRoot, fromRef string, cfg config.Config, _ adapter.Ada
 
 	bump := MaxBump(parsed)
 	plan := &Plan{
-		Adapter:          cfg.Adapter,
+		Adapter:          cfg.Adapter.Type,
 		LastTag:          lastTag,
 		CurrentVersion:   current,
 		Commits:          parsed,

@@ -13,10 +13,10 @@ import (
 
 func TestRunBuild_HappyPath(t *testing.T) {
 	repo := t.TempDir()
-	cfg := config.Config{Build: config.Build{
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{
 		Command:   "mkdir -p dist && touch dist/releaser_linux_amd64.tar.gz dist/releaser_darwin_arm64.tar.gz",
 		Artifacts: "dist/*.tar.gz",
-	}}
+	}}}
 
 	artifacts, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard)
 	if err != nil {
@@ -44,10 +44,10 @@ func TestRunBuild_HappyPath(t *testing.T) {
 
 func TestRunBuild_StreamsStdoutAndStderr(t *testing.T) {
 	repo := t.TempDir()
-	cfg := config.Config{Build: config.Build{
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{
 		Command:   "echo to-stdout && echo to-stderr >&2 && mkdir -p dist && touch dist/out",
 		Artifacts: "dist/*",
-	}}
+	}}}
 
 	var stdout, stderr bytes.Buffer
 	if _, err := release.RunBuild(repo, cfg, nil, &stdout, &stderr); err != nil {
@@ -63,10 +63,10 @@ func TestRunBuild_StreamsStdoutAndStderr(t *testing.T) {
 
 func TestRunBuild_BuildCommandFailureIsError(t *testing.T) {
 	repo := t.TempDir()
-	cfg := config.Config{Build: config.Build{
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{
 		Command:   "exit 7",
 		Artifacts: "dist/*",
-	}}
+	}}}
 	_, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected error when build command fails")
@@ -75,10 +75,10 @@ func TestRunBuild_BuildCommandFailureIsError(t *testing.T) {
 
 func TestRunBuild_GlobMatchesNothingIsError(t *testing.T) {
 	repo := t.TempDir()
-	cfg := config.Config{Build: config.Build{
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{
 		Command:   "true", // succeeds but produces nothing
 		Artifacts: "dist/*",
-	}}
+	}}}
 	_, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected error when artifacts glob matches nothing")
@@ -87,12 +87,12 @@ func TestRunBuild_GlobMatchesNothingIsError(t *testing.T) {
 
 func TestRunBuild_DirectoriesFilteredFromGlob(t *testing.T) {
 	repo := t.TempDir()
-	cfg := config.Config{Build: config.Build{
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{
 		// Create a file plus a directory in dist/; the glob matches both,
 		// but the directory should be filtered out of the result.
 		Command:   "mkdir -p dist/sub && touch dist/release.tar.gz",
 		Artifacts: "dist/*",
-	}}
+	}}}
 	artifacts, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("RunBuild: %v", err)
@@ -109,10 +109,10 @@ func TestRunBuild_RunsInRepoRoot(t *testing.T) {
 	// `pwd` inside the build command must equal repoRoot, not the
 	// current working directory of the test.
 	repo := t.TempDir()
-	cfg := config.Config{Build: config.Build{
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{
 		Command:   "pwd > dist-pwd.txt && mkdir -p dist && touch dist/x",
 		Artifacts: "dist/*",
-	}}
+	}}}
 	if _, err := release.RunBuild(repo, cfg, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("RunBuild: %v", err)
 	}
@@ -127,14 +127,14 @@ func TestRunBuild_RunsInRepoRoot(t *testing.T) {
 }
 
 func TestRunBuild_NoCommandConfigured(t *testing.T) {
-	cfg := config.Config{Build: config.Build{Artifacts: "dist/*"}}
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{Artifacts: "dist/*"}}}
 	if _, err := release.RunBuild(t.TempDir(), cfg, nil, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error for missing build.command")
 	}
 }
 
 func TestRunBuild_NoArtifactsConfigured(t *testing.T) {
-	cfg := config.Config{Build: config.Build{Command: "true"}}
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{Command: "true"}}}
 	if _, err := release.RunBuild(t.TempDir(), cfg, nil, io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error for missing build.artifacts")
 	}
@@ -142,10 +142,10 @@ func TestRunBuild_NoArtifactsConfigured(t *testing.T) {
 
 func TestRunBuild_ExtraEnvIsExportedToCommand(t *testing.T) {
 	repo := t.TempDir()
-	cfg := config.Config{Build: config.Build{
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{
 		Command:   "mkdir -p dist && printf '%s\\n%s\\n' \"$RELEASER_VERSION\" \"$RELEASER_TAG\" > dist/env.txt && touch dist/out",
 		Artifacts: "dist/*",
-	}}
+	}}}
 
 	env := release.BuildEnvForVersion(release.Semver{Minor: 2})
 	if _, err := release.RunBuild(repo, cfg, env, io.Discard, io.Discard); err != nil {

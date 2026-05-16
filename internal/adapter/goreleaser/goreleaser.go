@@ -73,11 +73,11 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 // adapter needs. Targets are intentionally not consulted here:
 // goreleaser owns its own target matrix via .goreleaser.yaml.
 func (*Adapter) ValidateConfig(cfg config.Config) error {
-	if cfg.Build.Command == "" {
-		return errors.New("goreleaser adapter requires build.command")
+	if cfg.Adapter.Build.Command == "" {
+		return errors.New("goreleaser adapter requires adapter.build.command")
 	}
-	if len(cfg.Version.Locations) == 0 {
-		return errors.New("goreleaser adapter requires at least one version.locations entry")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return errors.New("goreleaser adapter requires at least one adapter.version.locations entry")
 	}
 	return nil
 }
@@ -103,10 +103,10 @@ func (*Adapter) BuildEnv(_ config.Config) map[string]string { return nil }
 // configured version.locations entry. Mirrors the generic adapter's
 // implementation.
 func (*Adapter) ReadVersion(repoRoot string, cfg config.Config) (string, error) {
-	if len(cfg.Version.Locations) == 0 {
-		return "", errors.New("no version.locations configured")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return "", errors.New("no adapter.version.locations configured")
 	}
-	loc := cfg.Version.Locations[0]
+	loc := cfg.Adapter.Version.Locations[0]
 	pattern := loc.Regex
 	if !strings.HasPrefix(pattern, "(?") {
 		pattern = "(?m)" + pattern

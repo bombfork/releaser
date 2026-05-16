@@ -109,14 +109,16 @@ func TestSuggestDefaults_ProvidesBuildAndTargets(t *testing.T) {
 
 func validBase() config.Config {
 	return config.Config{
-		Build: config.Build{
-			Command:   "go build ./...",
-			Artifacts: "dist/*.tar.gz",
-			Targets:   []config.BuildTarget{{OS: "linux", Arch: "amd64"}},
+		Adapter: config.Adapter{
+			Build: config.Build{
+				Command:   "go build ./...",
+				Artifacts: "dist/*.tar.gz",
+				Targets:   []config.BuildTarget{{OS: "linux", Arch: "amd64"}},
+			},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
+			}},
 		},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
-		}},
 	}
 }
 
@@ -128,7 +130,7 @@ func TestValidateConfig_Happy(t *testing.T) {
 
 func TestValidateConfig_RequiresBuildCommand(t *testing.T) {
 	cfg := validBase()
-	cfg.Build.Command = ""
+	cfg.Adapter.Build.Command = ""
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when build.command is empty")
 	}
@@ -136,7 +138,7 @@ func TestValidateConfig_RequiresBuildCommand(t *testing.T) {
 
 func TestValidateConfig_RequiresArtifacts(t *testing.T) {
 	cfg := validBase()
-	cfg.Build.Artifacts = ""
+	cfg.Adapter.Build.Artifacts = ""
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when build.artifacts is empty")
 	}
@@ -144,7 +146,7 @@ func TestValidateConfig_RequiresArtifacts(t *testing.T) {
 
 func TestValidateConfig_RequiresVersionLocation(t *testing.T) {
 	cfg := validBase()
-	cfg.Version.Locations = nil
+	cfg.Adapter.Version.Locations = nil
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when version.locations is empty")
 	}
@@ -152,7 +154,7 @@ func TestValidateConfig_RequiresVersionLocation(t *testing.T) {
 
 func TestValidateConfig_RequiresAtLeastOneTarget(t *testing.T) {
 	cfg := validBase()
-	cfg.Build.Targets = nil
+	cfg.Adapter.Build.Targets = nil
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when build.targets is empty")
 	}
@@ -160,12 +162,12 @@ func TestValidateConfig_RequiresAtLeastOneTarget(t *testing.T) {
 
 func TestValidateConfig_RequiresOSAndArchOnEachTarget(t *testing.T) {
 	cfg := validBase()
-	cfg.Build.Targets = []config.BuildTarget{{OS: "linux"}}
+	cfg.Adapter.Build.Targets = []config.BuildTarget{{OS: "linux"}}
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when a target is missing arch")
 	}
 
-	cfg.Build.Targets = []config.BuildTarget{{Arch: "amd64"}}
+	cfg.Adapter.Build.Targets = []config.BuildTarget{{Arch: "amd64"}}
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when a target is missing os")
 	}
@@ -185,10 +187,10 @@ func TestWorkflowSnippets_OnlySetupGo(t *testing.T) {
 }
 
 func TestBuildEnv_EncodesTargetsAsSpaceSeparatedList(t *testing.T) {
-	cfg := config.Config{Build: config.Build{Targets: []config.BuildTarget{
+	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{Targets: []config.BuildTarget{
 		{OS: "linux", Arch: "amd64"},
 		{OS: "darwin", Arch: "arm64"},
-	}}}
+	}}}}
 	env := golang.New().BuildEnv(cfg)
 	got, ok := env["RELEASER_GO_TARGETS"]
 	if !ok {
@@ -209,9 +211,9 @@ func TestBuildEnv_NilWhenNoTargets(t *testing.T) {
 func TestReadVersion_FromConstantInSource(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, "internal/cli/root.go"), "package cli\n\nvar Version = \"1.2.3\"\n")
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "internal/cli/root.go", Regex: `^var Version = "(.*)"$`},
-	}}}
+	}}}}
 
 	got, err := golang.New().ReadVersion(repo, cfg)
 	if err != nil {
@@ -223,9 +225,9 @@ func TestReadVersion_FromConstantInSource(t *testing.T) {
 }
 
 func TestReadVersion_MissingFile(t *testing.T) {
-	cfg := config.Config{Version: config.Version{Locations: []config.VersionLocation{
+	cfg := config.Config{Adapter: config.Adapter{Version: config.Version{Locations: []config.VersionLocation{
 		{Path: "doesnotexist", Regex: `^(.+)$`},
-	}}}
+	}}}}
 	_, err := golang.New().ReadVersion(t.TempDir(), cfg)
 	if err == nil {
 		t.Fatal("expected error for missing file")

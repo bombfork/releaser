@@ -20,11 +20,13 @@ func TestPrepare_DryRunDoesNotMutate(t *testing.T) {
 	upstream, local := initPrepareFixture(t)
 
 	cfg := config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "true", Artifacts: "dist/*"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 	}
 
 	httpClient, counters := buildPrepareMock(t)
@@ -77,11 +79,13 @@ func TestPrepare_DryRunHonorsExistingPR(t *testing.T) {
 	upstream, local := initPrepareFixture(t)
 
 	cfg := config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "true", Artifacts: "dist/*"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 	}
 
 	httpClient, _ := buildPrepareMock(t)
@@ -140,11 +144,13 @@ func TestPrepare_DryRunNoBumpableCommitsIsExplicit(t *testing.T) {
 	run(local, "push", "-q", "origin", "main")
 
 	cfg := config.Config{
-		Adapter: "generic",
-		Build:   config.Build{Command: "true", Artifacts: "dist/*"},
-		Version: config.Version{Locations: []config.VersionLocation{
-			{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-		}},
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
 	}
 	httpClient, _ := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)

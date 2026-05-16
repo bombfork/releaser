@@ -1,6 +1,6 @@
 // Package golang provides the basic Go-specific adapter, which drives
 // cross-compilation directly with `go build` for the (OS, Arch) pairs
-// listed in cfg.Build.Targets. It auto-detects Go projects by the
+// listed in cfg.Adapter.Build.Targets. It auto-detects Go projects by the
 // presence of go.mod and assumes the project does NOT use goreleaser
 // (the sibling "goreleaser" adapter takes priority when both go.mod
 // and .goreleaser.yaml are present).
@@ -103,21 +103,21 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 // and at least one (OS, Arch) target. Each target must specify both
 // fields.
 func (*Adapter) ValidateConfig(cfg config.Config) error {
-	if cfg.Build.Command == "" {
-		return errors.New("go adapter requires build.command")
+	if cfg.Adapter.Build.Command == "" {
+		return errors.New("go adapter requires adapter.build.command")
 	}
-	if cfg.Build.Artifacts == "" {
-		return errors.New("go adapter requires build.artifacts")
+	if cfg.Adapter.Build.Artifacts == "" {
+		return errors.New("go adapter requires adapter.build.artifacts")
 	}
-	if len(cfg.Version.Locations) == 0 {
-		return errors.New("go adapter requires at least one version.locations entry")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return errors.New("go adapter requires at least one adapter.version.locations entry")
 	}
-	if len(cfg.Build.Targets) == 0 {
-		return errors.New("go adapter requires at least one build.targets entry (os/arch)")
+	if len(cfg.Adapter.Build.Targets) == 0 {
+		return errors.New("go adapter requires at least one adapter.build.targets entry (os/arch)")
 	}
-	for i, t := range cfg.Build.Targets {
+	for i, t := range cfg.Adapter.Build.Targets {
 		if t.OS == "" || t.Arch == "" {
-			return fmt.Errorf("build.targets[%d] requires both os and arch", i)
+			return fmt.Errorf("adapter.build.targets[%d] requires both os and arch", i)
 		}
 	}
 	return nil
@@ -140,11 +140,11 @@ func (*Adapter) WorkflowSnippets(_ config.Config) adapter.Snippets {
 // build command consumes this variable directly; user-supplied build
 // commands can do the same.
 func (*Adapter) BuildEnv(cfg config.Config) map[string]string {
-	if len(cfg.Build.Targets) == 0 {
+	if len(cfg.Adapter.Build.Targets) == 0 {
 		return nil
 	}
-	parts := make([]string, 0, len(cfg.Build.Targets))
-	for _, t := range cfg.Build.Targets {
+	parts := make([]string, 0, len(cfg.Adapter.Build.Targets))
+	for _, t := range cfg.Adapter.Build.Targets {
 		parts = append(parts, t.OS+"/"+t.Arch)
 	}
 	return map[string]string{"RELEASER_GO_TARGETS": strings.Join(parts, " ")}
@@ -154,10 +154,10 @@ func (*Adapter) BuildEnv(cfg config.Config) map[string]string {
 // configured version.locations entry. Mirrors the generic adapter's
 // implementation.
 func (*Adapter) ReadVersion(repoRoot string, cfg config.Config) (string, error) {
-	if len(cfg.Version.Locations) == 0 {
-		return "", errors.New("no version.locations configured")
+	if len(cfg.Adapter.Version.Locations) == 0 {
+		return "", errors.New("no adapter.version.locations configured")
 	}
-	loc := cfg.Version.Locations[0]
+	loc := cfg.Adapter.Version.Locations[0]
 	pattern := loc.Regex
 	if !strings.HasPrefix(pattern, "(?") {
 		pattern = "(?m)" + pattern

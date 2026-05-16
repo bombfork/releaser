@@ -42,12 +42,13 @@ func writeFile(t *testing.T, path string, body string) {
 
 // validConfig is a configuration that satisfies the generic adapter's
 // ValidateConfig requirements and can be reused across tests.
-const validConfig = `adapter: generic
-build:
-  command: make build
-  artifacts: dist/*
-version:
-  locations:
-    - path: Makefile
-      regex: '^VERSION := (.*)$'
+const validConfig = `adapter:
+  type: generic
+  build:
+    command: make build
+    artifacts: dist/*
+  version:
+    locations:
+      - path: Makefile
+        regex: '^VERSION := (.*)$'
 `

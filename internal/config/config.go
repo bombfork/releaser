@@ -21,20 +21,19 @@ const (
 const DefaultFilePath = ".github/releaser.yaml"
 
 // Config is the full releaser configuration as stored on disk.
+//
+// The schema splits along two axes: adapter-owned fields (build command,
+// artifact glob, version locations) live under the `adapter` key alongside
+// the adapter type discriminator; cross-cutting fields that apply
+// regardless of which adapter is in use (commit conventions, workflow
+// file names, release-time behavior) live at the root.
 type Config struct {
-	// Adapter is the name of the stack adapter that owns this configuration
-	// (e.g. "generic"). Determines which validation, autodetection, and
-	// workflow-generation rules apply.
-	Adapter string `yaml:"adapter"`
-
-	// Build describes how to produce the release artifacts.
-	Build Build `yaml:"build"`
+	// Adapter is the stack-adapter configuration block: the type
+	// discriminator plus the build / version fields the adapter owns.
+	Adapter Adapter `yaml:"adapter"`
 
 	// Commit overrides the default conventional-commit → bump-level mapping.
 	Commit Commit `yaml:"commit,omitempty"`
-
-	// Version describes where the project version string lives in the repo.
-	Version Version `yaml:"version,omitempty"`
 
 	// Workflows configures the names of the workflow files written by
 	// `releaser generate`. Unset fields fall back to DefaultWorkflows().
@@ -44,6 +43,23 @@ type Config struct {
 	// the pending-release branch name and the bot identity used for
 	// CI-driven commits. Unset fields fall back to DefaultRelease().
 	Release Release `yaml:"release,omitempty"`
+}
+
+// Adapter is the stack-adapter-owned configuration block. The shared
+// shape (Build + Version) is identical across adapters today; the Type
+// discriminator selects which adapter's validation, autodetection, and
+// workflow-generation rules apply.
+type Adapter struct {
+	// Type is the stack adapter identifier (e.g. "generic", "go",
+	// "goreleaser"). Determines which adapter the rest of this block is
+	// validated against.
+	Type string `yaml:"type"`
+
+	// Build describes how to produce the release artifacts.
+	Build Build `yaml:"build"`
+
+	// Version describes where the project version string lives in the repo.
+	Version Version `yaml:"version,omitempty"`
 }
 
 // Workflows holds the names of the workflow files produced by `generate`.

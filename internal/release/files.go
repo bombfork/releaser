@@ -12,7 +12,7 @@ import (
 	"github.com/bombfork/releaser/internal/config"
 )
 
-// RewriteVersionFiles updates every file listed in cfg.Version.Locations
+// RewriteVersionFiles updates every file listed in cfg.Adapter.Version.Locations
 // in place, replacing the contents of the regex's first capture group
 // with newVersion. All non-overlapping matches in each file are updated.
 //
@@ -25,10 +25,10 @@ import (
 // A failure partway through is not rolled back across files: callers
 // should run this on a fresh worktree so the branch can be discarded.
 func RewriteVersionFiles(repoRoot string, cfg config.Config, newVersion string) error {
-	if len(cfg.Version.Locations) == 0 {
+	if len(cfg.Adapter.Version.Locations) == 0 {
 		return errors.New("no version.locations configured")
 	}
-	for _, loc := range cfg.Version.Locations {
+	for _, loc := range cfg.Adapter.Version.Locations {
 		if err := rewriteOneVersionFile(repoRoot, loc, newVersion); err != nil {
 			return fmt.Errorf("rewrite %s: %w", loc.Path, err)
 		}
