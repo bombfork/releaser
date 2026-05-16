@@ -18,5 +18,9 @@ adapter:
         locations:
             - path: internal/cli/root.go
               regex: ^var Version = "(.*)"$
+            - path: .github/workflows/releaser-pending-release.yml
+              regex: 'uses: bombfork/releaser@v(.*)$'
+            - path: .github/workflows/releaser-publish.yml
+              regex: 'uses: bombfork/releaser@v(.*)$'
 release:
     default_branch: main

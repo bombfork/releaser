@@ -1,6 +1,7 @@
 package release_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -251,6 +253,177 @@ func TestPublish_ReleaseExistsButNoAssetsUploadsAll(t *testing.T) {
 	}
 	if got := c.uploadAsset.Load(); got != 2 {
 		t.Errorf("UploadAsset count = %d, want 2", got)
+	}
+}
+
+func TestPublish_WritesProgressAndSummary(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+	upstream, repo := initPublishFixture(t)
+
+	httpClient, _ := buildPublishMock(t, publishMockBehavior{
+		getReleaseResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusNotFound, "release not found")
+		},
+		listAssetsResponse: func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode([]gh.ReleaseAsset{})
+		},
+	})
+
+	var stdout, summary bytes.Buffer
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_test"}
+	if err := release.Publish(context.Background(), repo, release.PublishInputs{
+		Config:        publishCfg(),
+		Adapter:       generic.New(),
+		GitHubClient:  ghClient,
+		TokenProvider: tp,
+		Stdout:        &stdout,
+		Stderr:        io.Discard,
+		RemoteURL:     upstream,
+		Summary:       &summary,
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	for _, want := range []string{
+		"Repository: bombfork/releaser-test",
+		"Current version: 0.2.0",
+		"Latest tag: v0.1.0",
+		"Created release v0.2.0",
+		"https://github.com/bombfork/releaser-test/releases/tag/v0.2.0",
+		"Running build:",
+		"Build produced 2 artifact(s)",
+		"Uploaded asset releaser_linux_amd64.tar.gz",
+		"Uploaded asset releaser_darwin_arm64.tar.gz",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q; full output:\n%s", want, stdout.String())
+		}
+	}
+
+	for _, want := range []string{
+		"## releaser publish",
+		"v0.2.0",
+		"| Repository | bombfork/releaser-test |",
+		"| Tag | v0.2.0 |",
+		"| Previous tag | v0.1.0 |",
+		"**Outcome:**",
+		"**created**",
+		"https://github.com/bombfork/releaser-test/releases/tag/v0.2.0",
+		"### Artifacts",
+		"releaser_linux_amd64.tar.gz",
+		"releaser_darwin_arm64.tar.gz",
+	} {
+		if !strings.Contains(summary.String(), want) {
+			t.Errorf("summary missing %q; full content:\n%s", want, summary.String())
+		}
+	}
+}
+
+func TestPublish_SummaryOnError(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+	upstream, repo := initPublishFixture(t)
+
+	// Fail on release creation — drives Publish into its error path.
+	httpClient, _ := buildPublishMock(t, publishMockBehavior{
+		getReleaseResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusNotFound, "release not found")
+		},
+		listAssetsResponse: func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode([]gh.ReleaseAsset{})
+		},
+		createRelResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusUnprocessableEntity, "synthetic create-release failure")
+		},
+	})
+
+	var summary bytes.Buffer
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_test"}
+	err := release.Publish(context.Background(), repo, release.PublishInputs{
+		Config:        publishCfg(),
+		Adapter:       generic.New(),
+		GitHubClient:  ghClient,
+		TokenProvider: tp,
+		Stdout:        io.Discard,
+		Stderr:        io.Discard,
+		RemoteURL:     upstream,
+		Summary:       &summary,
+	})
+	if err == nil {
+		t.Fatalf("Publish: expected error, got nil")
+	}
+
+	for _, want := range []string{
+		"## releaser publish",
+		"v0.2.0",
+		"**Failed:**",
+		"create release v0.2.0",
+	} {
+		if !strings.Contains(summary.String(), want) {
+			t.Errorf("error-path summary missing %q; full content:\n%s", want, summary.String())
+		}
+	}
+}
+
+func TestPublish_SummaryOnNoOp(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+	upstream := t.TempDir()
+	repo := t.TempDir()
+	runIn := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runIn(upstream, "init", "-q", "--bare", "-b", "main")
+	runIn(repo, "init", "-q", "-b", "main")
+	runIn(repo, "config", "user.email", "t@example.com")
+	runIn(repo, "config", "user.name", "t")
+	runIn(repo, "config", "commit.gpgsign", "false")
+	runIn(repo, "remote", "add", "origin", upstream)
+	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("VERSION := 0.1.0\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runIn(repo, "add", "Makefile")
+	runIn(repo, "commit", "-q", "-m", "chore: initial")
+	runIn(repo, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
+	runIn(repo, "push", "-q", "origin", "main")
+	runIn(repo, "push", "-q", "origin", "v0.1.0")
+
+	httpClient, _ := buildPublishMock(t, publishMockBehavior{
+		getReleaseResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusInternalServerError, "unexpected")
+		},
+		listAssetsResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusInternalServerError, "unexpected")
+		},
+	})
+
+	var summary bytes.Buffer
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_test"}
+	if err := release.Publish(context.Background(), repo, release.PublishInputs{
+		Config:        publishCfg(),
+		Adapter:       generic.New(),
+		GitHubClient:  ghClient,
+		TokenProvider: tp,
+		Stdout:        io.Discard,
+		Stderr:        io.Discard,
+		RemoteURL:     upstream,
+		Summary:       &summary,
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	for _, want := range []string{
+		"## releaser publish",
+		"no-op",
+	} {
+		if !strings.Contains(summary.String(), want) {
+			t.Errorf("no-op summary missing %q; full content:\n%s", want, summary.String())
+		}
 	}
 }
 

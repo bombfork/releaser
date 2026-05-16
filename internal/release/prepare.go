@@ -46,9 +46,16 @@ type PrepareInputs struct {
 	// errors in this mode.
 	DryRun bool
 
-	// Stdout receives the dry-run description. Ignored when DryRun is
-	// false. Defaults to io.Discard when nil.
+	// Stdout receives progress lines from each phase of the real run
+	// and the description block in DryRun mode. Defaults to io.Discard
+	// when nil.
 	Stdout io.Writer
+
+	// Summary receives a GitHub Actions Job Summary markdown block on
+	// both the success and error paths. CLI callers pass an append-mode
+	// handle to $GITHUB_STEP_SUMMARY when set; tests pass a bytes.Buffer
+	// to inspect the content. Defaults to io.Discard when nil.
+	Summary io.Writer
 }
 
 // Prepare maintains the pending-release pull request: it builds the
@@ -71,11 +78,25 @@ type PrepareInputs struct {
 // regenerates equivalent state and updates the open PR with the same
 // content. Returning nil with no side effects is the correct outcome
 // when no commits since the latest release warrant a version bump.
-func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
+func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr error) {
+	out := in.Stdout
+	if out == nil {
+		out = io.Discard
+	}
+	sum := in.Summary
+	if sum == nil {
+		sum = io.Discard
+	}
+
+	report := &prepareReport{DryRun: in.DryRun}
+	defer func() { writePrepareSummary(sum, report, retErr) }()
+
 	owner, repoName, err := DetectRepoSlug(repoRoot)
 	if err != nil {
 		return fmt.Errorf("detect repo slug: %w", err)
 	}
+	report.Repo = owner + "/" + repoName
+	logf(out, "Repository: %s\n", report.Repo)
 
 	identity, err := ResolveIdentity(repoRoot, in.Config)
 	if err != nil {
@@ -87,6 +108,8 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 		return fmt.Errorf("look up repository: %w", err)
 	}
 	defaultBranch := ghRepo.DefaultBranch
+	report.DefaultBranch = defaultBranch
+	logf(out, "Default branch: %s\n", defaultBranch)
 	originDefaultRef := fmt.Sprintf("refs/remotes/origin/%s", defaultBranch)
 
 	remoteURL := in.RemoteURL
@@ -106,11 +129,7 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
 		return fmt.Errorf("fetch origin: %w", err)
 	}
-
-	out := in.Stdout
-	if out == nil {
-		out = io.Discard
-	}
+	logln(out, "Fetched origin")
 
 	if !in.Force {
 		if err := RequireCleanWorktree(repoRoot); err != nil {
@@ -127,14 +146,20 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 	if err != nil {
 		return fmt.Errorf("build plan: %w", err)
 	}
+	report.PrevVersion = formatPrevVersion(plan.LastTag)
+	report.NextVersion = "v" + plan.NextVersion.String()
+	report.Bump = string(plan.Bump)
+	report.CommitsSinceTag = len(plan.Commits)
+	report.Commits = plan.Commits
+
 	if !plan.ReleaseWarranted {
-		if in.DryRun {
-			if _, werr := fmt.Fprintln(out, "No bumpable commits since the last release; prepare would be a no-op."); werr != nil {
-				return werr
-			}
-		}
+		report.Outcome = "noop"
+		// Clear next-version on a no-op so the summary header reads cleanly.
+		report.NextVersion = ""
+		logln(out, "No bumpable commits since the last release; prepare is a no-op.")
 		return nil
 	}
+	logf(out, "Plan: %s → %s (%d commit(s), %s bump)\n", report.PrevVersion, report.NextVersion, len(plan.Commits), plan.Bump)
 
 	// Invariant: if any commit since the latest tag is a release-prep
 	// bump (the subject format Prepare itself produces), a bump PR
@@ -144,40 +169,54 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 	// described in issue #6. Bail out; the next push after publish
 	// lands will see a fresh latest tag and behave correctly.
 	if containsReleasePrepareCommit(plan.Commits) {
-		if in.DryRun {
-			if _, werr := fmt.Fprintln(out, "Plan includes a chore(release): prepare commit; publish is in flight. prepare would be a no-op."); werr != nil {
-				return werr
-			}
-		}
+		report.Outcome = "already-prepared"
+		logln(out, "Plan includes a chore(release): prepare commit; publish is in flight. prepare is a no-op.")
 		return nil
 	}
 
 	release := in.Config.Release.WithDefaults()
 	branchName := release.BranchName
+	report.BranchName = branchName
 	title := fmt.Sprintf("chore(release): v%s", plan.NextVersion)
 	body := FormatReleaseNotes(plan) + "\n\nMerging this PR will trigger the release workflow."
 	commitMsg := fmt.Sprintf("chore(release): prepare v%s", plan.NextVersion)
 
 	if in.DryRun {
-		return describePreparePlan(ctx, out, in, plan, owner, repoName, defaultBranch, branchName, identity, commitMsg, title, body)
+		// For the dry-run path, peek at PR existence so the summary can
+		// report would-create vs would-update.
+		existing, lookupErr := in.GitHubClient.GetPRByHead(ctx, owner, repoName, branchName)
+		switch {
+		case errors.Is(lookupErr, github.ErrNotFound):
+			report.Outcome = "would-create"
+		case lookupErr != nil:
+			return fmt.Errorf("look up pending-release PR: %w", lookupErr)
+		default:
+			report.Outcome = "would-update"
+			report.PRNumber = existing.Number
+		}
+		return describePreparePlan(out, in, plan, defaultBranch, branchName, identity, commitMsg, title, body, report)
 	}
 
 	if err := ResetBranchFromRef(repoRoot, branchName, originDefaultRef); err != nil {
 		return fmt.Errorf("reset branch: %w", err)
 	}
+	logf(out, "Reset branch %s from origin/%s\n", branchName, defaultBranch)
 	if err := RewriteVersionFiles(repoRoot, in.Config, plan.NextVersion.String()); err != nil {
 		return fmt.Errorf("rewrite version files: %w", err)
 	}
+	logf(out, "Rewrote %d version file(s) to %s\n", len(in.Config.Adapter.Version.Locations), plan.NextVersion)
 	if _, err := CommitWithIdentity(repoRoot, identity, commitMsg); err != nil {
 		return fmt.Errorf("commit version bump: %w", err)
 	}
+	logf(out, "Committed bump as %s <%s>\n", identity.Name, identity.Email)
 	if err := ForcePush(repoRoot, branchName, remoteURL, auth); err != nil {
 		return fmt.Errorf("push branch: %w", err)
 	}
+	logf(out, "Force-pushed %s\n", branchName)
 
 	existing, err := in.GitHubClient.GetPRByHead(ctx, owner, repoName, branchName)
 	if errors.Is(err, github.ErrNotFound) {
-		_, createErr := in.GitHubClient.CreatePR(ctx, owner, repoName, github.PRInput{
+		created, createErr := in.GitHubClient.CreatePR(ctx, owner, repoName, github.PRInput{
 			Title: title,
 			Body:  body,
 			Head:  branchName,
@@ -186,6 +225,9 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 		if createErr != nil {
 			return fmt.Errorf("create pending-release PR: %w", createErr)
 		}
+		report.Outcome = "created"
+		report.PRNumber = created.Number
+		logf(out, "Created PR #%d: https://github.com/%s/pull/%d\n", created.Number, report.Repo, created.Number)
 		return nil
 	}
 	if err != nil {
@@ -197,7 +239,20 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) error {
 	}); err != nil {
 		return fmt.Errorf("update pending-release PR: %w", err)
 	}
+	report.Outcome = "updated"
+	report.PRNumber = existing.Number
+	logf(out, "Updated PR #%d: https://github.com/%s/pull/%d\n", existing.Number, report.Repo, existing.Number)
 	return nil
+}
+
+// formatPrevVersion renders the previous-release tag for display.
+// Plan.LastTag carries the raw tag name (e.g. "v0.1.0"); we only ensure
+// "(initial)" is returned when there's no prior release.
+func formatPrevVersion(lastTag string) string {
+	if lastTag == "" {
+		return "(initial)"
+	}
+	return lastTag
 }
 
 // containsReleasePrepareCommit reports whether any commit in the slice
@@ -215,11 +270,12 @@ func containsReleasePrepareCommit(commits []ParsedCommit) bool {
 }
 
 // describePreparePlan prints what Prepare would do, without performing
-// any side effects. The PR-lookup step is read-only and runs against
-// the live API. Output is accumulated in a buffer and written to out
-// in a single Write so a transient stdout error doesn't leave a
-// half-printed plan.
-func describePreparePlan(ctx context.Context, out io.Writer, in PrepareInputs, plan *Plan, owner, repoName, defaultBranch, branchName string, identity Identity, commitMsg, title, body string) error {
+// any side effects. The PR existence check has already been done by the
+// caller and recorded on report; this function only formats the
+// human-readable description. Output is accumulated in a buffer and
+// written to out in a single Write so a transient stdout error doesn't
+// leave a half-printed plan.
+func describePreparePlan(out io.Writer, in PrepareInputs, plan *Plan, defaultBranch, branchName string, identity Identity, commitMsg, title, body string, report *prepareReport) error {
 	var buf bytes.Buffer
 	fmt.Fprintln(&buf, plan.String())
 	fmt.Fprintln(&buf, "Prepare actions (dry run)")
@@ -232,14 +288,11 @@ func describePreparePlan(ctx context.Context, out io.Writer, in PrepareInputs, p
 	fmt.Fprintf(&buf, "Would commit as %s <%s>: %q\n", identity.Name, identity.Email, commitMsg)
 	fmt.Fprintf(&buf, "Would force-push %q to origin\n", branchName)
 
-	existing, err := in.GitHubClient.GetPRByHead(ctx, owner, repoName, branchName)
-	switch {
-	case errors.Is(err, github.ErrNotFound):
+	switch report.Outcome {
+	case "would-create":
 		fmt.Fprintf(&buf, "Would create PR (head: %s → base: %s)\n", branchName, defaultBranch)
-	case err != nil:
-		return fmt.Errorf("look up pending-release PR: %w", err)
-	default:
-		fmt.Fprintf(&buf, "Would update PR #%d (head: %s → base: %s)\n", existing.Number, branchName, defaultBranch)
+	case "would-update":
+		fmt.Fprintf(&buf, "Would update PR #%d (head: %s → base: %s)\n", report.PRNumber, branchName, defaultBranch)
 	}
 	fmt.Fprintf(&buf, "  title: %s\n", title)
 	fmt.Fprintln(&buf, "  body:")

@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -12,6 +14,33 @@ import (
 	"github.com/bombfork/releaser/internal/github"
 	"github.com/bombfork/releaser/internal/release"
 )
+
+// openStepSummary returns a writer for the GitHub Actions Job Summary
+// file. When GITHUB_STEP_SUMMARY is set (CI runners always set it), the
+// returned writer appends to that file. Otherwise it discards writes.
+// Callers must Close() when done; the no-op variant's Close is a no-op.
+func openStepSummary() io.WriteCloser {
+	path := os.Getenv("GITHUB_STEP_SUMMARY")
+	if path == "" {
+		return nopWriteCloser{io.Discard}
+	}
+	// GitHub Actions creates the file before the step runs; we append
+	// so that multiple steps in the same job each contribute a block.
+	// Opening with O_CREATE is defensive for local manual testing.
+	// 0o600 satisfies gosec; the runner-created file keeps its existing mode.
+	// #nosec G304,G703 — path comes from the runner-controlled env var by design.
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		// Don't fail the run just because the summary file can't be
+		// opened — the real action work still has to proceed.
+		return nopWriteCloser{io.Discard}
+	}
+	return f
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }
 
 func newReleaseCommand() *cobra.Command {
 	var dryRun bool
@@ -108,6 +137,8 @@ func runReleasePrepare(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 	if err != nil {
 		return fmt.Errorf("build github client: %w", err)
 	}
+	sw := openStepSummary()
+	defer func() { _ = sw.Close() }()
 	return release.Prepare(cmd.Context(), repoRoot, release.PrepareInputs{
 		Config:        *cfg,
 		Adapter:       ad,
@@ -116,6 +147,7 @@ func runReleasePrepare(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 		Force:         force,
 		DryRun:        dryRun,
 		Stdout:        cmd.OutOrStdout(),
+		Summary:       sw,
 	})
 }
 
@@ -168,6 +200,8 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 	if err != nil {
 		return fmt.Errorf("build github client: %w", err)
 	}
+	sw := openStepSummary()
+	defer func() { _ = sw.Close() }()
 	return release.Publish(cmd.Context(), repoRoot, release.PublishInputs{
 		Config:        *cfg,
 		Adapter:       ad,
@@ -177,6 +211,7 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 		Stderr:        cmd.ErrOrStderr(),
 		Force:         force,
 		DryRun:        dryRun,
+		Summary:       sw,
 	})
 }
 

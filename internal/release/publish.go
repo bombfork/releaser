@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -49,6 +50,12 @@ type PublishInputs struct {
 	// performs no release creation, runs no build, and uploads no
 	// assets. Safety-check failures become warnings in this mode.
 	DryRun bool
+
+	// Summary receives a GitHub Actions Job Summary markdown block on
+	// both the success and error paths. CLI callers pass an append-mode
+	// handle to $GITHUB_STEP_SUMMARY when set; tests pass a bytes.Buffer
+	// to inspect the content. Defaults to io.Discard when nil.
+	Summary io.Writer
 }
 
 // Publish performs the side-effecting half of a release. It reads the
@@ -63,11 +70,25 @@ type PublishInputs struct {
 // Publish does not push or fetch. Callers are responsible for ensuring
 // the repository's HEAD reflects the state to release — in CI, the
 // generated workflow's actions/checkout step does this naturally.
-func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
+func Publish(ctx context.Context, repoRoot string, in PublishInputs) (retErr error) {
+	out := in.Stdout
+	if out == nil {
+		out = io.Discard
+	}
+	sum := in.Summary
+	if sum == nil {
+		sum = io.Discard
+	}
+
+	report := &publishReport{DryRun: in.DryRun}
+	defer func() { writePublishSummary(sum, report, retErr) }()
+
 	owner, repoName, err := DetectRepoSlug(repoRoot)
 	if err != nil {
 		return fmt.Errorf("detect repo slug: %w", err)
 	}
+	report.Repo = owner + "/" + repoName
+	logf(out, "Repository: %s\n", report.Repo)
 
 	ghRepo, err := in.GitHubClient.GetRepo(ctx, owner, repoName)
 	if err != nil {
@@ -90,11 +111,7 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
 		return fmt.Errorf("fetch origin: %w", err)
 	}
-
-	out := in.Stdout
-	if out == nil {
-		out = io.Discard
-	}
+	logln(out, "Fetched origin")
 
 	if !in.Force {
 		if err := RequireCleanWorktree(repoRoot); err != nil {
@@ -124,10 +141,17 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 	if err != nil {
 		return fmt.Errorf("parse current version %q: %w", currentStr, err)
 	}
+	logf(out, "Current version: %s\n", current)
 
 	latestTag, err := LatestVersionTag(repoRoot)
 	if err != nil {
 		return fmt.Errorf("read latest tag: %w", err)
+	}
+	report.PrevTag = latestTag
+	if latestTag == "" {
+		logln(out, "Latest tag: (none — initial release)")
+	} else {
+		logf(out, "Latest tag: %s\n", latestTag)
 	}
 	if latestTag != "" {
 		latest, err := ParseSemver(latestTag)
@@ -135,24 +159,37 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 			return fmt.Errorf("parse latest tag %q: %w", latestTag, err)
 		}
 		if !current.Greater(latest) {
-			if in.DryRun {
-				if _, werr := fmt.Fprintf(out, "Current version %s is not newer than the latest tag %s; publish would be a no-op.\n", current, latestTag); werr != nil {
-					return werr
-				}
-			}
+			report.Outcome = "noop"
+			logf(out, "Current version %s is not newer than the latest tag %s; publish is a no-op.\n", current, latestTag)
 			return nil
 		}
 	}
 
 	tag := "v" + current.String()
+	report.Tag = tag
+
+	headSHA, shaErr := headCommitSHA(repoRoot)
+	if shaErr != nil {
+		return shaErr
+	}
+	report.TargetCommit = headSHA
 
 	if in.DryRun {
-		return describePublishPlan(ctx, out, in, repoRoot, owner, repoName, tag, current, latestTag)
+		return describePublishPlan(ctx, out, in, repoRoot, owner, repoName, tag, current, latestTag, headSHA, report)
 	}
 
-	releaseID, err := ensureRelease(ctx, repoRoot, in, owner, repoName, tag, current)
+	releaseID, created, err := ensureRelease(ctx, repoRoot, in, owner, repoName, tag, current)
 	if err != nil {
 		return err
+	}
+	report.ReleaseCreated = created
+	releaseURL := fmt.Sprintf("https://github.com/%s/releases/tag/%s", report.Repo, tag)
+	if created {
+		report.Outcome = "created"
+		logf(out, "Created release %s: %s\n", tag, releaseURL)
+	} else {
+		report.Outcome = "already-existed"
+		logf(out, "Release %s already exists: %s\n", tag, releaseURL)
 	}
 
 	// ensureRelease may have just created the tag on GitHub via the API.
@@ -167,10 +204,19 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 	for k, v := range in.Adapter.BuildEnv(in.Config) {
 		buildEnv[k] = v
 	}
+	logf(out, "Running build: %s\n", in.Config.Adapter.Build.Command)
 	artifacts, err := RunBuild(repoRoot, in.Config, buildEnv, in.Stdout, in.Stderr)
 	if err != nil {
 		return fmt.Errorf("run build: %w", err)
 	}
+	for _, path := range artifacts {
+		info := artifactInfo{Name: filepath.Base(path)}
+		if st, statErr := os.Stat(path); statErr == nil {
+			info.Size = st.Size()
+		}
+		report.Artifacts = append(report.Artifacts, info)
+	}
+	logf(out, "Build produced %d artifact(s)\n", len(artifacts))
 
 	attached, err := listAttachedAssetNames(ctx, in.GitHubClient, owner, repoName, releaseID)
 	if err != nil {
@@ -180,11 +226,15 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 	for _, path := range artifacts {
 		name := filepath.Base(path)
 		if attached[name] {
+			report.AssetsSkipped++
+			logf(out, "Asset %s already attached; skipping\n", name)
 			continue
 		}
 		if _, err := in.GitHubClient.UploadReleaseAsset(ctx, owner, repoName, releaseID, name, path); err != nil {
 			return fmt.Errorf("upload asset %s: %w", name, err)
 		}
+		report.AssetsUploaded++
+		logf(out, "Uploaded asset %s\n", name)
 	}
 	return nil
 }
@@ -193,8 +243,9 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) error {
 // build, creating a release, or uploading any assets. Read-only API
 // calls (GetReleaseByTag, ListReleaseAssets) still hit the live service
 // so the dry-run reflects current remote state. Output is accumulated
-// in a buffer and written to out in a single Write.
-func describePublishPlan(ctx context.Context, out io.Writer, in PublishInputs, repoRoot, owner, repoName, tag string, current Semver, latestTag string) error {
+// in a buffer and written to out in a single Write. report.Outcome is
+// set so the deferred summary writer renders the would-do action.
+func describePublishPlan(ctx context.Context, out io.Writer, in PublishInputs, repoRoot, owner, repoName, tag string, current Semver, latestTag, headSHA string, report *publishReport) error {
 	var buf bytes.Buffer
 	fmt.Fprintln(&buf, "Publish actions (dry run)")
 	fmt.Fprintln(&buf, "-------------------------")
@@ -205,17 +256,13 @@ func describePublishPlan(ctx context.Context, out io.Writer, in PublishInputs, r
 	}
 	fmt.Fprintf(&buf, "Current version: %s\n", current)
 	fmt.Fprintf(&buf, "Tag to publish: %s\n", tag)
-
-	headSHA, err := headCommitSHA(repoRoot)
-	if err != nil {
-		return err
-	}
 	fmt.Fprintf(&buf, "Target commit:  %s\n", headSHA)
 	fmt.Fprintln(&buf)
 
 	existing, err := in.GitHubClient.GetReleaseByTag(ctx, owner, repoName, tag)
 	switch {
 	case errors.Is(err, github.ErrNotFound):
+		report.Outcome = "would-create"
 		plan, err := BuildPlan(repoRoot, in.Config, in.Adapter)
 		if err != nil {
 			return fmt.Errorf("build release plan: %w", err)
@@ -229,6 +276,7 @@ func describePublishPlan(ctx context.Context, out io.Writer, in PublishInputs, r
 	case err != nil:
 		return fmt.Errorf("look up release %s: %w", tag, err)
 	default:
+		report.Outcome = "would-skip-create"
 		fmt.Fprintf(&buf, "Release %s already exists (id: %d); creation step would be skipped.\n", tag, existing.ID)
 		attached, err := listAttachedAssetNames(ctx, in.GitHubClient, owner, repoName, existing.ID)
 		if err != nil {
@@ -252,29 +300,29 @@ func describePublishPlan(ctx context.Context, out io.Writer, in PublishInputs, r
 	return nil
 }
 
-// ensureRelease returns the ID of the GitHub release for tag, creating
-// it if it does not yet exist. Release notes are generated from the
-// commits since the previous tag, filtered to exclude the release-prep
-// commit produced by `release prepare`.
-func ensureRelease(ctx context.Context, repoRoot string, in PublishInputs, owner, repoName, tag string, current Semver) (int64, error) {
+// ensureRelease returns the ID of the GitHub release for tag and whether
+// it was created on this call (vs. already existed). Release notes are
+// generated from the commits since the previous tag, filtered to exclude
+// the release-prep commit produced by `release prepare`.
+func ensureRelease(ctx context.Context, repoRoot string, in PublishInputs, owner, repoName, tag string, current Semver) (int64, bool, error) {
 	existing, err := in.GitHubClient.GetReleaseByTag(ctx, owner, repoName, tag)
 	if err == nil {
-		return existing.ID, nil
+		return existing.ID, false, nil
 	}
 	if !errors.Is(err, github.ErrNotFound) {
-		return 0, fmt.Errorf("look up release %s: %w", tag, err)
+		return 0, false, fmt.Errorf("look up release %s: %w", tag, err)
 	}
 
 	plan, err := BuildPlan(repoRoot, in.Config, in.Adapter)
 	if err != nil {
-		return 0, fmt.Errorf("build release plan: %w", err)
+		return 0, false, fmt.Errorf("build release plan: %w", err)
 	}
 	plan.Commits = excludeReleasePrepareCommits(plan.Commits)
 	notes := FormatReleaseNotes(plan)
 
 	headSHA, err := headCommitSHA(repoRoot)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
 	created, err := in.GitHubClient.CreateRelease(ctx, owner, repoName, github.ReleaseInput{
@@ -284,9 +332,9 @@ func ensureRelease(ctx context.Context, repoRoot string, in PublishInputs, owner
 		TargetCommitish: headSHA,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("create release %s: %w", tag, err)
+		return 0, false, fmt.Errorf("create release %s: %w", tag, err)
 	}
-	return created.ID, nil
+	return created.ID, true, nil
 }
 
 // listAttachedAssetNames returns the set of asset names currently

@@ -1,6 +1,7 @@
 package release_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -285,6 +286,199 @@ func TestPrepare_BailsWhenReleasePrepCommitAlreadyMerged(t *testing.T) {
 	}
 	if got := counters.prUpdate.Load(); got != 0 {
 		t.Errorf("PR update count = %d, want 0 when publish is in flight", got)
+	}
+}
+
+func TestPrepare_WritesProgressAndSummary(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+
+	upstream, local := initPrepareFixture(t)
+
+	cfg := config.Config{
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
+	}
+
+	httpClient, _ := buildPrepareMock(t)
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_testtoken"}
+
+	var stdout, summary bytes.Buffer
+	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		RemoteURL: upstream,
+		Stdout:    &stdout,
+		Summary:   &summary,
+	}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	// Stdout should show progress at each phase boundary.
+	for _, want := range []string{
+		"Repository: bombfork/releaser-test",
+		"Default branch: main",
+		"Fetched origin",
+		"Plan: v0.1.0 → v0.2.0",
+		"Reset branch releaser/pending-release from origin/main",
+		"Rewrote 1 version file(s) to 0.2.0",
+		"Force-pushed releaser/pending-release",
+		"Created PR #42",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q; full output:\n%s", want, stdout.String())
+		}
+	}
+
+	// Summary should be a structured markdown block.
+	for _, want := range []string{
+		"## releaser prepare",
+		"v0.2.0",
+		"| Repository | bombfork/releaser-test |",
+		"| Previous version | v0.1.0 |",
+		"| Next version | v0.2.0 |",
+		"| Bump | minor |",
+		"| Branch | releaser/pending-release |",
+		"**Outcome:**",
+		"https://github.com/bombfork/releaser-test/pull/42",
+		"created",
+		"### Commits",
+		"feat: shiny new thing",
+	} {
+		if !strings.Contains(summary.String(), want) {
+			t.Errorf("summary missing %q; full content:\n%s", want, summary.String())
+		}
+	}
+}
+
+func TestPrepare_SummaryOnNoOp(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+
+	upstream := t.TempDir()
+	local := t.TempDir()
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run(upstream, "init", "-q", "--bare", "-b", "main")
+	run(local, "init", "-q", "-b", "main")
+	run(local, "config", "user.email", "t@example.com")
+	run(local, "config", "user.name", "t")
+	run(local, "config", "commit.gpgsign", "false")
+	run(local, "remote", "add", "origin", upstream)
+	run(local, "commit", "--allow-empty", "-q", "-m", "chore: initial")
+	run(local, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
+	run(local, "push", "-q", "origin", "main")
+	run(local, "push", "-q", "origin", "v0.1.0")
+	// Only a chore: commit — no release warranted.
+	run(local, "commit", "--allow-empty", "-q", "-m", "chore: cleanup")
+	run(local, "push", "-q", "origin", "main")
+
+	cfg := config.Config{
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
+	}
+
+	httpClient, _ := buildPrepareMock(t)
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_testtoken"}
+
+	var summary bytes.Buffer
+	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		RemoteURL: upstream,
+		Summary:   &summary,
+	}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	for _, want := range []string{
+		"## releaser prepare",
+		"no-op",
+		"no bumpable commits",
+	} {
+		if !strings.Contains(summary.String(), want) {
+			t.Errorf("no-op summary missing %q; full content:\n%s", want, summary.String())
+		}
+	}
+}
+
+func TestPrepare_SummaryOnError(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+
+	upstream, local := initPrepareFixture(t)
+
+	cfg := config.Config{
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
+	}
+
+	// Mock that errors on PR create — drives Prepare into its error path
+	// after the plan has been computed but before the PR is opened.
+	failingClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatchHandler(
+			mock.GetReposByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Repository{DefaultBranch: gh.Ptr("main")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposPullsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode([]gh.PullRequest{})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposPullsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mock.WriteError(w, http.StatusUnprocessableEntity, "synthetic create-PR failure")
+			}),
+		),
+	)
+	ghClient := releasergh.NewClient(failingClient)
+	tp := &fakeTokenProvider{token: "ghs_testtoken"}
+
+	var summary bytes.Buffer
+	err := release.Prepare(context.Background(), local, release.PrepareInputs{
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		RemoteURL: upstream,
+		Summary:   &summary,
+	})
+	if err == nil {
+		t.Fatalf("Prepare: expected error, got nil")
+	}
+
+	// The summary must still be written, with the **Failed** line and
+	// the data gathered up to that point.
+	for _, want := range []string{
+		"## releaser prepare",
+		"v0.2.0",
+		"**Failed:**",
+		"create pending-release PR",
+	} {
+		if !strings.Contains(summary.String(), want) {
+			t.Errorf("error-path summary missing %q; full content:\n%s", want, summary.String())
+		}
 	}
 }
 
