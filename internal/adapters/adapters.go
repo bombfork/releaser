@@ -8,12 +8,15 @@ package adapters
 import (
 	"github.com/bombfork/releaser/internal/adapter"
 	"github.com/bombfork/releaser/internal/adapter/generic"
+	"github.com/bombfork/releaser/internal/adapter/golang"
 )
 
-// DefaultRegistry returns the registry of built-in adapters.
-// The generic adapter is registered last so it serves as the fallback.
+// DefaultRegistry returns the registry of built-in adapters in
+// priority order. Stack-specific adapters come first; the generic
+// adapter is registered last so it serves as the catch-all fallback.
 func DefaultRegistry() *adapter.Registry {
 	r := adapter.NewRegistry()
+	r.Register(golang.New())
 	r.Register(generic.New())
 	return r
 }
