@@ -134,7 +134,7 @@ func TestPrepare_CreatesPendingReleasePRAndBranchOnFirstRun(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -199,7 +199,7 @@ func TestPrepare_UpdatesExistingPROnRerun(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -261,7 +261,7 @@ func TestPrepare_BailsWhenReleasePrepCommitAlreadyMerged(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -298,7 +298,7 @@ func TestPrepare_WritesProgressAndSummary(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -386,7 +386,7 @@ func TestPrepare_SummaryOnNoOp(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -426,7 +426,7 @@ func TestPrepare_SummaryOnError(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -512,7 +512,7 @@ func TestPrepare_NoBumpableCommitsIsNoop(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},

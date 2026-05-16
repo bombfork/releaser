@@ -22,7 +22,7 @@ func TestPrepare_DryRunDoesNotMutate(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -81,7 +81,7 @@ func TestPrepare_DryRunHonorsExistingPR(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -146,7 +146,7 @@ func TestPrepare_DryRunNoBumpableCommitsIsExplicit(t *testing.T) {
 	cfg := config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: "dist/*"},
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},

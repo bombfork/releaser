@@ -111,8 +111,14 @@ func TestSuggestDefaults_ProvidesBuildAndArtifacts(t *testing.T) {
 	if !strings.Contains(s.Build.Command, "$RELEASER_TAG") {
 		t.Errorf("Build.Command should thread RELEASER_TAG, got %q", s.Build.Command)
 	}
-	if s.Build.Artifacts != "dist/*.tar.gz" {
-		t.Errorf("Build.Artifacts = %q, want dist/*.tar.gz", s.Build.Artifacts)
+	wantArtifacts := []string{"dist/*.tar.gz", "dist/checksums.txt"}
+	if len(s.Build.Artifacts) != len(wantArtifacts) {
+		t.Fatalf("Build.Artifacts = %v, want %v", s.Build.Artifacts, wantArtifacts)
+	}
+	for i, want := range wantArtifacts {
+		if s.Build.Artifacts[i] != want {
+			t.Errorf("Build.Artifacts[%d] = %q, want %q", i, s.Build.Artifacts[i], want)
+		}
 	}
 	// Version locations are intentionally NOT suggested — the user
 	// must point at their version literal explicitly for now.

@@ -13,7 +13,7 @@ func sampleConfig() *config.Config {
 	return &config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "make build", Artifacts: "dist/*"},
+			Build: config.Build{Command: "make build", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -34,7 +34,6 @@ func TestGet_ScalarString(t *testing.T) {
 	tests := map[string]string{
 		"adapter.type":                   "generic",
 		"adapter.build.command":          "make build",
-		"adapter.build.artifacts":        "dist/*",
 		"workflows.pending_release_file": "prep.yml",
 		"workflows.publish_file":         "ship.yml",
 	}
@@ -96,7 +95,18 @@ func TestGet_StructAsYAML(t *testing.T) {
 	if !strings.Contains(got, "command: make build") {
 		t.Errorf("got:\n%s", got)
 	}
-	if !strings.Contains(got, "artifacts: dist/*") {
+	if !strings.Contains(got, "- dist/*") {
+		t.Errorf("got:\n%s", got)
+	}
+}
+
+func TestGet_StringSliceAsYAML(t *testing.T) {
+	c := sampleConfig()
+	got, err := c.Get("adapter.build.artifacts")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !strings.Contains(got, "- dist/*") {
 		t.Errorf("got:\n%s", got)
 	}
 }

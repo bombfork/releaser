@@ -33,8 +33,10 @@ const Name = "go"
 // DefaultBuildCommand is the shell script used as Build.Command when
 // the user does not override it. It reads the space-separated list of
 // "os/arch" targets from $RELEASER_GO_TARGETS (set by BuildEnv),
-// invokes `go build` once per target, and archives each binary into
-// dist/<repo>-<version>-<os>-<arch>.tar.gz.
+// invokes `go build` once per target, archives each binary into
+// dist/<repo>-<version>-<os>-<arch>.tar.gz, and emits a single
+// dist/checksums.txt covering every archive so verifiers can pull one
+// file alongside the binaries.
 const DefaultBuildCommand = `set -e
 mkdir -p dist
 name=$(basename "$PWD")
@@ -45,12 +47,13 @@ for target in $RELEASER_GO_TARGETS; do
   GOOS="$goos" GOARCH="$goarch" go build -o "dist/${bin}" ./...
   tar -czf "dist/${bin}.tar.gz" -C dist "${bin}"
   rm "dist/${bin}"
-done`
+done
+(cd dist && sha256sum *.tar.gz > checksums.txt)`
 
-// DefaultArtifacts is the artifact glob used as Build.Artifacts when
-// the user does not override it. Matches the archives produced by
-// DefaultBuildCommand.
-const DefaultArtifacts = "dist/*.tar.gz"
+// DefaultArtifacts is the list of artifact globs used as Build.Artifacts
+// when the user does not override it. Matches the per-target archives
+// and the aggregate checksums file produced by DefaultBuildCommand.
+var DefaultArtifacts = []string{"dist/*.tar.gz", "dist/checksums.txt"}
 
 // Adapter is the basic Go-stack implementation of adapter.Adapter.
 type Adapter struct{}
@@ -96,7 +99,7 @@ func (*Adapter) SchemaInfo() config.AdapterInfo {
 		},
 		Defaults: map[string]string{
 			"adapter.build.command":   DefaultBuildCommand,
-			"adapter.build.artifacts": DefaultArtifacts,
+			"adapter.build.artifacts": config.RenderYAMLDefault(DefaultArtifacts),
 			"adapter.build.targets":   config.RenderYAMLDefault(DefaultTargets),
 		},
 	}
@@ -115,7 +118,7 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 	return config.Suggestions{
 		Build: &config.Build{
 			Command:   DefaultBuildCommand,
-			Artifacts: DefaultArtifacts,
+			Artifacts: append([]string(nil), DefaultArtifacts...),
 			Targets:   append([]config.BuildTarget(nil), DefaultTargets...),
 		},
 	}, nil
@@ -129,7 +132,7 @@ func (*Adapter) ValidateConfig(cfg config.Config) error {
 	if cfg.Adapter.Build.Command == "" {
 		return errors.New("go adapter requires adapter.build.command")
 	}
-	if cfg.Adapter.Build.Artifacts == "" {
+	if len(cfg.Adapter.Build.Artifacts) == 0 {
 		return errors.New("go adapter requires adapter.build.artifacts")
 	}
 	if len(cfg.Adapter.Version.Locations) == 0 {

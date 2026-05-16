@@ -8,15 +8,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/bombfork/releaser/internal/config"
 )
 
 // RunBuild executes cfg.Adapter.Build.Command via `sh -c` with cwd=repoRoot,
 // streaming stdout and stderr to the provided writers. After the command
-// returns successfully, cfg.Adapter.Build.Artifacts is resolved as a glob
-// relative to repoRoot and the matching file paths are returned in
-// sorted order (directories are filtered out).
+// returns successfully, each pattern in cfg.Adapter.Build.Artifacts is
+// resolved as a glob relative to repoRoot and the union of matches is
+// returned in sorted order, with duplicates removed and directories
+// filtered out.
 //
 // extraEnv is merged into the command's environment on top of the
 // caller's os.Environ(). Use BuildEnvForVersion to produce the standard
@@ -33,7 +35,7 @@ func RunBuild(repoRoot string, cfg config.Config, extraEnv map[string]string, st
 	if cfg.Adapter.Build.Command == "" {
 		return nil, errors.New("no build.command configured")
 	}
-	if cfg.Adapter.Build.Artifacts == "" {
+	if len(cfg.Adapter.Build.Artifacts) == 0 {
 		return nil, errors.New("no build.artifacts configured")
 	}
 	if stdout == nil {
@@ -64,7 +66,7 @@ func RunBuild(repoRoot string, cfg config.Config, extraEnv map[string]string, st
 		return nil, err
 	}
 	if len(artifacts) == 0 {
-		return nil, fmt.Errorf("build artifacts glob %q matched no files", cfg.Adapter.Build.Artifacts)
+		return nil, fmt.Errorf("build artifacts globs %q matched no files", strings.Join(cfg.Adapter.Build.Artifacts, ", "))
 	}
 	return artifacts, nil
 }
@@ -86,27 +88,35 @@ func BuildEnvForVersion(v Semver) map[string]string {
 	}
 }
 
-// resolveArtifacts expands a glob relative to repoRoot and returns the
-// sorted, directory-filtered list of absolute matching paths.
-func resolveArtifacts(repoRoot, pattern string) ([]string, error) {
-	abs := pattern
-	if !filepath.IsAbs(pattern) {
-		abs = filepath.Join(repoRoot, pattern)
-	}
-	matches, err := filepath.Glob(abs)
-	if err != nil {
-		return nil, fmt.Errorf("glob %q: %w", pattern, err)
-	}
-	out := make([]string, 0, len(matches))
-	for _, m := range matches {
-		info, err := os.Stat(m)
+// resolveArtifacts expands each glob in patterns relative to repoRoot and
+// returns the sorted, deduplicated, directory-filtered list of absolute
+// matching paths. Patterns may overlap; each absolute path appears at
+// most once in the result regardless of how many patterns matched it.
+func resolveArtifacts(repoRoot string, patterns []string) ([]string, error) {
+	seen := make(map[string]struct{})
+	for _, pattern := range patterns {
+		abs := pattern
+		if !filepath.IsAbs(pattern) {
+			abs = filepath.Join(repoRoot, pattern)
+		}
+		matches, err := filepath.Glob(abs)
 		if err != nil {
-			return nil, fmt.Errorf("stat %s: %w", m, err)
+			return nil, fmt.Errorf("glob %q: %w", pattern, err)
 		}
-		if info.IsDir() {
-			continue
+		for _, m := range matches {
+			info, err := os.Stat(m)
+			if err != nil {
+				return nil, fmt.Errorf("stat %s: %w", m, err)
+			}
+			if info.IsDir() {
+				continue
+			}
+			seen[m] = struct{}{}
 		}
-		out = append(out, m)
+	}
+	out := make([]string, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
 	}
 	sort.Strings(out)
 	return out, nil

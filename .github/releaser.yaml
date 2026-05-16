@@ -2,7 +2,9 @@ adapter:
     type: go
     build:
         command: ./scripts/package.sh
-        artifacts: dist/releaser_*.tar.gz
+        artifacts:
+            - dist/releaser_*.tar.gz
+            - dist/checksums.txt
         targets:
             - os: linux
               arch: amd64

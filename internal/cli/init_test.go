@@ -39,8 +39,8 @@ func TestInit_FromPresetWritesConfigAtDefaultPath(t *testing.T) {
 	if got.Adapter.Build.Command != "make build" {
 		t.Errorf("build.command = %q, want %q", got.Adapter.Build.Command, "make build")
 	}
-	if got.Adapter.Build.Artifacts != "dist/*" {
-		t.Errorf("build.artifacts = %q, want %q", got.Adapter.Build.Artifacts, "dist/*")
+	if len(got.Adapter.Build.Artifacts) != 1 || got.Adapter.Build.Artifacts[0] != "dist/*" {
+		t.Errorf("build.artifacts = %v, want [dist/*]", got.Adapter.Build.Artifacts)
 	}
 	if len(got.Adapter.Version.Locations) != 1 {
 		t.Fatalf("version.locations: got %d entries, want 1", len(got.Adapter.Version.Locations))

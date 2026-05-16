@@ -293,7 +293,7 @@ func describePublishPlan(ctx context.Context, out io.Writer, in PublishInputs, r
 	}
 	fmt.Fprintln(&buf)
 	fmt.Fprintf(&buf, "Would run build: %s\n", in.Config.Adapter.Build.Command)
-	fmt.Fprintf(&buf, "Would attach artifacts matching: %s (skipping any already attached)\n", in.Config.Adapter.Build.Artifacts)
+	fmt.Fprintf(&buf, "Would attach artifacts matching: %s (skipping any already attached)\n", strings.Join(in.Config.Adapter.Build.Artifacts, ", "))
 	if _, err := out.Write(buf.Bytes()); err != nil {
 		return fmt.Errorf("write dry-run output: %w", err)
 	}

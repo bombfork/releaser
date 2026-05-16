@@ -27,12 +27,16 @@ every field with types and defaults.
 
 Manual edits to the configuration file are technically supported, but
 comments and formatting are lost the next time the CLI writes the file.
-For scalar edits, prefer the get/set subcommands.`,
+For scalar edits prefer the get/set subcommands; for list-valued fields
+(artifacts, targets, version locations) use add/rm/list.`,
 	}
 
 	cmd.AddCommand(
 		newConfigGetCommand(),
 		newConfigSetCommand(),
+		newConfigAddCommand(),
+		newConfigRmCommand(),
+		newConfigListCommand(),
 		newConfigSchemaCommand(),
 	)
 
@@ -68,8 +72,8 @@ func newConfigGetCommand() *cobra.Command {
 		Long: `Read the value at the given dotted key path. Scalar leaves are printed
 as bare text; structs, maps, and slices are printed as YAML fragments.
 
-Slice elements cannot be addressed by path; request the parent and edit
-the file directly to manage individual entries.`,
+Slice elements cannot be addressed by path; use 'config list <key>' to
+print a list-valued field, and 'config add' / 'config rm' to mutate it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := cmd.Flags().GetString(RepoRootFlag)
@@ -99,8 +103,8 @@ the change to .github/releaser.yaml. The resulting configuration must
 satisfy the chosen adapter's validation; if it does not, the file is
 left untouched.
 
-Slice elements are not directly settable; edit the file directly to
-manage individual entries.`,
+Slice elements are not directly settable; use 'config add' and
+'config rm' to manage individual entries.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := cmd.Flags().GetString(RepoRootFlag)

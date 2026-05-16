@@ -24,7 +24,8 @@ func TestLoad_HappyPath(t *testing.T) {
   type: generic
   build:
     command: make build
-    artifacts: dist/*
+    artifacts:
+      - dist/*
   version:
     locations:
       - path: Makefile
@@ -72,7 +73,7 @@ func TestSave_WritesToDefaultPathAndCreatesParent(t *testing.T) {
 	cfg := &config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "make build", Artifacts: "dist/*"},
+			Build: config.Build{Command: "make build", Artifacts: []string{"dist/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
 			}},
@@ -98,7 +99,7 @@ func TestSave_LoadRoundTrip(t *testing.T) {
 	original := &config.Config{
 		Adapter: config.Adapter{
 			Type:  "generic",
-			Build: config.Build{Command: "go build ./...", Artifacts: "bin/*"},
+			Build: config.Build{Command: "go build ./...", Artifacts: []string{"bin/*"}},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "version.txt", Regex: `^(.*)$`},
 				{Path: "Cargo.toml", Regex: `^version = "(.*)"$`},

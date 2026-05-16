@@ -29,6 +29,16 @@ func runCLI(t *testing.T, args ...string) runResult {
 	return runResult{err: err, stdout: stdout.String(), stderr: stderr.String()}
 }
 
+// readFile reads path or fails the test.
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
 // writeFile writes body to path, creating parent directories as needed.
 func writeFile(t *testing.T, path string, body string) {
 	t.Helper()
@@ -46,7 +56,8 @@ const validConfig = `adapter:
   type: generic
   build:
     command: make build
-    artifacts: dist/*
+    artifacts:
+      - dist/*
   version:
     locations:
       - path: Makefile

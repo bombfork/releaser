@@ -116,8 +116,8 @@ func mergePreset(suggestions config.Suggestions, preset *config.Config) config.C
 		if out.Adapter.Build.Command == "" {
 			out.Adapter.Build.Command = suggestions.Build.Command
 		}
-		if out.Adapter.Build.Artifacts == "" {
-			out.Adapter.Build.Artifacts = suggestions.Build.Artifacts
+		if len(out.Adapter.Build.Artifacts) == 0 {
+			out.Adapter.Build.Artifacts = append([]string(nil), suggestions.Build.Artifacts...)
 		}
 		if len(out.Adapter.Build.Targets) == 0 {
 			out.Adapter.Build.Targets = suggestions.Build.Targets

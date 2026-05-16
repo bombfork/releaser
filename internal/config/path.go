@@ -15,15 +15,17 @@ import (
 var ErrUnknownKey = errors.New("unknown configuration key")
 
 // ErrUnsettableKey is returned by Set when the resolved value cannot be
-// set directly — for example when the path would descend through a slice.
-// Slice elements are managed via the dedicated per-slice helpers.
-var ErrUnsettableKey = errors.New("key is not directly settable; use the per-slice subcommands")
+// set directly — for example when the path resolves to a whole slice.
+// Slice fields are managed via AppendToSlice / RemoveFromSlice (wired
+// as the `config add` and `config rm` subcommands).
+var ErrUnsettableKey = errors.New("key is not directly settable; use 'config add' / 'config rm'")
 
 // Get returns the value at the given dotted key path. Scalar leaves
 // (strings, bools, numbers) are returned as bare text; structs, maps, and
 // slices are returned as YAML fragments. Slice index addressing is not
-// supported — request the whole slice and use the per-slice subcommands
-// for element-level operations.
+// supported — request the whole slice and use AppendToSlice /
+// RemoveFromSlice (the `config add` / `config rm` subcommands) for
+// element-level operations.
 func (c *Config) Get(key string) (string, error) {
 	v, err := walkPath(reflect.ValueOf(c).Elem(), key)
 	if err != nil {
@@ -74,7 +76,7 @@ func stepValue(v reflect.Value, seg string) (reflect.Value, error) {
 		}
 		return mv, nil
 	case reflect.Slice:
-		return reflect.Value{}, fmt.Errorf("segment %q: cannot address slice elements by path; use the per-slice subcommands", seg)
+		return reflect.Value{}, fmt.Errorf("segment %q: cannot address slice elements by path; use 'config add' / 'config rm'", seg)
 	default:
 		return reflect.Value{}, fmt.Errorf("segment %q: cannot descend into %s", seg, v.Kind())
 	}
@@ -101,7 +103,8 @@ func fieldByYAMLTag(t reflect.Type, name string) (int, bool) {
 // Set assigns the given value to the leaf at the given dotted key path.
 // Only scalar leaves (string-, bool-, number-typed) and map entries can be
 // set. Whole structs, maps, and slices are not settable through this API
-// — set the individual entries or use the per-slice subcommands.
+// — set the individual entries, or for slices use AppendToSlice /
+// RemoveFromSlice (the `config add` / `config rm` subcommands).
 //
 // Set mutates the receiver only; persisting the change is the caller's
 // responsibility (Save). Validation against the adapter is also the
@@ -166,7 +169,7 @@ func setRecursive(v reflect.Value, segments []string, value string) error {
 		return nil
 
 	case reflect.Slice:
-		return fmt.Errorf("config set %q: cannot address slice elements by path; use the per-slice subcommands", seg)
+		return fmt.Errorf("config set %q: cannot address slice elements by path; use 'config add' / 'config rm'", seg)
 	}
 	return fmt.Errorf("config set: cannot descend into %s", v.Kind())
 }

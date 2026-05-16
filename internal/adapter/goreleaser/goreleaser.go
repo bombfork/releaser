@@ -31,9 +31,12 @@ const Name = "goreleaser"
 // validate steps (the engine owns release creation and tag handling).
 const DefaultBuildCommand = `GORELEASER_CURRENT_TAG="$RELEASER_TAG" goreleaser release --skip=publish,validate --clean`
 
-// DefaultArtifacts is the artifact glob used as Build.Artifacts when
-// the user does not override it.
-const DefaultArtifacts = "dist/*.tar.gz"
+// DefaultArtifacts is the list of artifact globs used as Build.Artifacts
+// when the user does not override it. GoReleaser produces both
+// per-target archives and an aggregate dist/checksums.txt (driven by
+// the goreleaser `checksum` block); both are listed here so the
+// checksum file is uploaded alongside the archives.
+var DefaultArtifacts = []string{"dist/*.tar.gz", "dist/checksums.txt"}
 
 // Adapter is the GoReleaser implementation of adapter.Adapter.
 type Adapter struct{}
@@ -74,7 +77,7 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 	return config.Suggestions{
 		Build: &config.Build{
 			Command:   DefaultBuildCommand,
-			Artifacts: DefaultArtifacts,
+			Artifacts: append([]string(nil), DefaultArtifacts...),
 		},
 	}, nil
 }
@@ -90,7 +93,7 @@ func (*Adapter) SchemaInfo() config.AdapterInfo {
 		},
 		Defaults: map[string]string{
 			"adapter.build.command":   DefaultBuildCommand,
-			"adapter.build.artifacts": DefaultArtifacts,
+			"adapter.build.artifacts": config.RenderYAMLDefault(DefaultArtifacts),
 		},
 	}
 }

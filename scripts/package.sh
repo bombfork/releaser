@@ -6,6 +6,10 @@
 #   - LICENSE
 #   - README.md
 #
+# Also emits dist/checksums.txt containing SHA-256 sums for every
+# generated archive so verifiers can pull a single checksum file
+# alongside the binaries.
+#
 # Output layout matches the download URL the composite action in
 # action.yml expects:
 #   releases/download/<tag>/releaser_<os>_<arch>.tar.gz
@@ -55,3 +59,5 @@ for target in $targets; do
   rm -rf "$staging"
   trap - EXIT
 done
+
+(cd dist && sha256sum releaser_*.tar.gz > checksums.txt)

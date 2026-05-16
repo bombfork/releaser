@@ -7,7 +7,8 @@ The CLI is a single binary (`releaser`) with four subcommands:
 | Command | Purpose |
 |---|---|
 | `releaser init` | Gather project information and write the configuration file at the repository root |
-| `releaser config get/set` | Inspect or modify the configuration |
+| `releaser config get/set` | Inspect or modify scalar configuration values |
+| `releaser config add/rm/list` | Manage entries in list-valued fields (artifacts, targets, version locations) |
 | `releaser generate` | Generate the GitHub Actions workflows that drive the release process |
 | `releaser release [--dry-run]` | Cut a release. Interactive locally, non-interactive in CI. Idempotent on retry |
 
@@ -35,8 +36,20 @@ This repository also ships a composite action that downloads the matching releas
 Single-project repositories only. The user provides:
 
 - the build command or script that produces the release artifacts,
-- a glob describing which artifact files to attach to the release,
+- one or more globs describing which artifact files to attach to the release (the union of matches is uploaded; duplicates are deduplicated),
 - the list of (file path, regex) locations where the project version string lives,
 - optionally, custom commit-type → bump-level overrides.
+
+The `artifacts` field is a YAML sequence:
+
+```yaml
+adapter:
+  type: go
+  build:
+    command: ./scripts/package.sh
+    artifacts:
+      - dist/releaser_*.tar.gz
+      - dist/checksums.txt
+```
 
 Monorepos and stack-specific autodetection adapters are future work.

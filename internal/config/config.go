@@ -122,7 +122,7 @@ func (r Release) WithDefaults() Release {
 // Build describes how to produce release artifacts and which files to attach.
 type Build struct {
 	Command   string        `yaml:"command"           desc:"Shell command (or path to a script) producing the release artifacts when run at the repo root"`
-	Artifacts string        `yaml:"artifacts"         desc:"Glob pattern matching the files to attach to the GitHub release"`
+	Artifacts []string      `yaml:"artifacts"         desc:"Glob patterns matching the files to attach to the GitHub release; the union of matches is uploaded and duplicates are deduplicated"`
 	Targets   []BuildTarget `yaml:"targets,omitempty" desc:"(OS, Arch) pairs to cross-compile for; consumed by adapters that drive cross-compilation directly"`
 }
 

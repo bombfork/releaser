@@ -71,7 +71,7 @@ func publishCfg() config.Config {
 			Type: "generic",
 			Build: config.Build{
 				Command:   "mkdir -p dist && touch dist/releaser_linux_amd64.tar.gz dist/releaser_darwin_arm64.tar.gz",
-				Artifacts: "dist/*",
+				Artifacts: []string{"dist/*"},
 			},
 			Version: config.Version{Locations: []config.VersionLocation{
 				{Path: "Makefile", Regex: `^VERSION := (.*)$`},

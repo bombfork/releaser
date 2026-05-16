@@ -81,8 +81,17 @@ func TestSuggestDefaults_ProvidesBuildAndTargets(t *testing.T) {
 	if !strings.Contains(s.Build.Command, "RELEASER_VERSION") {
 		t.Errorf("Build.Command should embed RELEASER_VERSION in archive names, got %q", s.Build.Command)
 	}
-	if s.Build.Artifacts != "dist/*.tar.gz" {
-		t.Errorf("Build.Artifacts = %q, want dist/*.tar.gz", s.Build.Artifacts)
+	wantArtifacts := []string{"dist/*.tar.gz", "dist/checksums.txt"}
+	if len(s.Build.Artifacts) != len(wantArtifacts) {
+		t.Fatalf("Build.Artifacts = %v, want %v", s.Build.Artifacts, wantArtifacts)
+	}
+	for i, want := range wantArtifacts {
+		if s.Build.Artifacts[i] != want {
+			t.Errorf("Build.Artifacts[%d] = %q, want %q", i, s.Build.Artifacts[i], want)
+		}
+	}
+	if !strings.Contains(s.Build.Command, "sha256sum") {
+		t.Errorf("Build.Command should emit a checksums.txt via sha256sum, got %q", s.Build.Command)
 	}
 	if len(s.Build.Targets) == 0 {
 		t.Fatal("expected non-empty default Targets")
@@ -112,7 +121,7 @@ func validBase() config.Config {
 		Adapter: config.Adapter{
 			Build: config.Build{
 				Command:   "go build ./...",
-				Artifacts: "dist/*.tar.gz",
+				Artifacts: []string{"dist/*.tar.gz"},
 				Targets:   []config.BuildTarget{{OS: "linux", Arch: "amd64"}},
 			},
 			Version: config.Version{Locations: []config.VersionLocation{
@@ -138,7 +147,7 @@ func TestValidateConfig_RequiresBuildCommand(t *testing.T) {
 
 func TestValidateConfig_RequiresArtifacts(t *testing.T) {
 	cfg := validBase()
-	cfg.Adapter.Build.Artifacts = ""
+	cfg.Adapter.Build.Artifacts = nil
 	if err := golang.New().ValidateConfig(cfg); err == nil {
 		t.Error("expected error when build.artifacts is empty")
 	}
