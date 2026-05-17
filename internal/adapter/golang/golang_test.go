@@ -187,8 +187,8 @@ func TestWorkflowSnippets_OnlySetupGo(t *testing.T) {
 	if len(s.SetupSteps) != 1 {
 		t.Fatalf("got %d setup steps, want 1", len(s.SetupSteps))
 	}
-	if !strings.Contains(s.SetupSteps[0], "actions/setup-go@v6") {
-		t.Errorf("setup step should reference actions/setup-go@v6, got %q", s.SetupSteps[0])
+	if !strings.Contains(s.SetupSteps[0], "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6") {
+		t.Errorf("setup step should pin actions/setup-go to its v6 SHA, got %q", s.SetupSteps[0])
 	}
 	if strings.Contains(s.SetupSteps[0], "goreleaser") {
 		t.Errorf("basic go adapter should not inject goreleaser setup, got %q", s.SetupSteps[0])

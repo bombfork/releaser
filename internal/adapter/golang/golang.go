@@ -155,7 +155,7 @@ func (*Adapter) ValidateConfig(cfg config.Config) error {
 func (*Adapter) WorkflowSnippets(_ config.Config) adapter.Snippets {
 	return adapter.Snippets{
 		SetupSteps: []string{
-			"- uses: actions/setup-go@v6\n  with:\n    go-version: stable",
+			"- uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6\n  with:\n    go-version: stable",
 		},
 	}
 }

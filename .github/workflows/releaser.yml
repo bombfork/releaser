@@ -56,10 +56,10 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: stable
       - name: Determine mode
@@ -97,7 +97,7 @@ jobs:
           echo "Selected command: $cmd"
 
       - name: Run releaser
-        uses: bombfork/releaser@v0.8.0
+        uses: bombfork/releaser@20ed308f8a77ffd14598d4b11f2d6a576beb5bfa # v0.8.0
         with:
           command: ${{ steps.mode.outputs.command }} ${{ inputs.dry_run && '--dry-run' || '' }}
           app-id: ${{ vars.RELEASER_APP_ID }}

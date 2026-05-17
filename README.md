@@ -23,7 +23,7 @@ The CLI is a single binary (`releaser`) with four subcommands:
 
 A single generated workflow (`.github/workflows/releaser.yml` by default) drives both halves. On every push to the default branch — and on `workflow_dispatch` — a first step inspects the head commit and runs either `releaser release prepare` or `releaser release publish`. The detection signal is the head commit message: a `chore(release): prepare vX.Y.Z` prefix or a default merge-commit `from <owner>/<release-branch>` substring routes to publish; everything else routes to prepare. `workflow_dispatch` exposes a `mode` input (`auto` / `prepare` / `publish`) to override auto-detection when needed.
 
-The workflow pins the action ref it consumes (`uses: bombfork/releaser@vX.Y.Z`). That line is intentionally not in `adapter.version.locations`, because bumping it as part of the release PR would have the next release try to consume itself before publishing. After each release ships, bump the action ref by hand to the just-released tag.
+The workflow pins the action ref it consumes (`uses: bombfork/releaser@<commit-sha> # vX.Y.Z`). Releaser's own workflows and the templates it generates pin every `uses:` reference to a commit SHA — with the tag in a trailing comment — to reduce the blast radius of upstream action compromises. The action-version line is intentionally not in `adapter.version.locations`, because bumping it as part of the release PR would have the next release try to consume itself before publishing. After each release ships, bump the SHA (and comment) by hand to the just-released tag.
 
 ## Installation
 

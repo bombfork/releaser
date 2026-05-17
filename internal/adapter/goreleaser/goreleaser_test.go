@@ -168,8 +168,8 @@ func TestWorkflowSnippets_IncludesSetupGoAndGoReleaser(t *testing.T) {
 	}
 	joined := strings.Join(s.SetupSteps, "\n")
 	for _, want := range []string{
-		"actions/setup-go@v6",
-		"goreleaser/goreleaser-action@v6",
+		"actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6",
+		"goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6",
 		"install-only: true",
 	} {
 		if !strings.Contains(joined, want) {
