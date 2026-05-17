@@ -110,8 +110,7 @@ func TestSave_LoadRoundTrip(t *testing.T) {
 			"perf": config.BumpMinor,
 		}},
 		Workflows: config.Workflows{
-			PendingReleaseFile: "prep.yml",
-			PublishFile:        "ship.yml",
+			File: "release.yml",
 		},
 	}
 

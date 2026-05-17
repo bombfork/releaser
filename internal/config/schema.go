@@ -54,8 +54,7 @@ func BuildSchema(info *AdapterInfo) Schema {
 func EngineDefaults() map[string]string {
 	d := map[string]string{}
 	w := DefaultWorkflows()
-	d["workflows.pending_release_file"] = w.PendingReleaseFile
-	d["workflows.publish_file"] = w.PublishFile
+	d["workflows.file"] = w.File
 	r := DefaultRelease()
 	d["release.branch_name"] = r.BranchName
 	d["release.default_branch"] = r.DefaultBranch

@@ -23,8 +23,7 @@ func sampleConfig() *config.Config {
 			"perf": config.BumpMinor,
 		}},
 		Workflows: config.Workflows{
-			PendingReleaseFile: "prep.yml",
-			PublishFile:        "ship.yml",
+			File: "release.yml",
 		},
 	}
 }
@@ -32,10 +31,9 @@ func sampleConfig() *config.Config {
 func TestGet_ScalarString(t *testing.T) {
 	c := sampleConfig()
 	tests := map[string]string{
-		"adapter.type":                   "generic",
-		"adapter.build.command":          "make build",
-		"workflows.pending_release_file": "prep.yml",
-		"workflows.publish_file":         "ship.yml",
+		"adapter.type":          "generic",
+		"adapter.build.command": "make build",
+		"workflows.file":        "release.yml",
 	}
 	for key, want := range tests {
 		got, err := c.Get(key)
@@ -160,11 +158,11 @@ func TestSet_ScalarString(t *testing.T) {
 
 func TestSet_NestedScalarString(t *testing.T) {
 	c := sampleConfig()
-	if err := c.Set("workflows.pending_release_file", "x.yml"); err != nil {
+	if err := c.Set("workflows.file", "x.yml"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if c.Workflows.PendingReleaseFile != "x.yml" {
-		t.Errorf("workflows.pending_release_file = %q, want %q", c.Workflows.PendingReleaseFile, "x.yml")
+	if c.Workflows.File != "x.yml" {
+		t.Errorf("workflows.file = %q, want %q", c.Workflows.File, "x.yml")
 	}
 }
 

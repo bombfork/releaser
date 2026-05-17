@@ -1,8 +1,10 @@
-// Package generate writes the GitHub Actions workflow files that drive
-// the release process. Two workflows are produced: one maintains the
-// pending-release pull request, the other publishes the release when
-// that PR is merged. File names come from the configuration; their
-// content is rendered from embedded text/template templates.
+// Package generate writes the GitHub Actions workflow file that drives
+// the release process. A single workflow is produced; its first step
+// inspects the head commit to decide whether to run `release prepare`
+// (the default) or `release publish` (when the head commit looks like
+// the merge of the pending-release pull request). The file name comes
+// from the configuration; its content is rendered from an embedded
+// text/template template.
 //
 // Template delimiters are `<<` and `>>` so that GitHub Actions' own
 // `${{ ... }}` expression syntax passes through unchanged.
@@ -31,8 +33,8 @@ type Inputs struct {
 	ActionRef string
 }
 
-// Generate writes the workflow files under repoRoot/.github/workflows/.
-// File names come from in.Config.Workflows (with defaults filled in).
+// Generate writes the workflow file under repoRoot/.github/workflows/.
+// The file name comes from in.Config.Workflows (with defaults filled in).
 func Generate(repoRoot string, in Inputs) error {
 	workflows := in.Config.Workflows.WithDefaults()
 	release := in.Config.Release.WithDefaults()
@@ -44,20 +46,16 @@ func Generate(repoRoot string, in Inputs) error {
 	data := templateData{
 		ActionRef:     in.ActionRef,
 		DefaultBranch: release.DefaultBranch,
+		BranchName:    release.BranchName,
 		SetupSteps:    snippets.SetupSteps,
 	}
-	if err := renderTo(filepath.Join(dir, workflows.PendingReleaseFile), "pending-release.yml.tmpl", data); err != nil {
-		return err
-	}
-	if err := renderTo(filepath.Join(dir, workflows.PublishFile), "publish.yml.tmpl", data); err != nil {
-		return err
-	}
-	return nil
+	return renderTo(filepath.Join(dir, workflows.File), "release.yml.tmpl", data)
 }
 
 type templateData struct {
 	ActionRef     string
 	DefaultBranch string
+	BranchName    string
 	SetupSteps    []string
 }
 

@@ -8,9 +8,9 @@ import (
 	"github.com/bombfork/releaser/internal/config"
 )
 
-// With no workflow names configured, `releaser generate` writes the two
-// workflow files at their default names under .github/workflows/.
-func TestGenerate_WritesDefaultWorkflowFiles(t *testing.T) {
+// With no workflow name configured, `releaser generate` writes the
+// workflow file at its default name under .github/workflows/.
+func TestGenerate_WritesDefaultWorkflowFile(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), validConfig)
 
@@ -19,22 +19,19 @@ func TestGenerate_WritesDefaultWorkflowFiles(t *testing.T) {
 		t.Fatalf("generate: %v\nstderr: %s", r.err, r.stderr)
 	}
 
-	d := config.DefaultWorkflows()
-	for _, name := range []string{d.PendingReleaseFile, d.PublishFile} {
-		p := filepath.Join(repo, ".github", "workflows", name)
-		if _, err := os.Stat(p); err != nil {
-			t.Errorf("missing default workflow file %s: %v", p, err)
-		}
+	name := config.DefaultWorkflows().File
+	p := filepath.Join(repo, ".github", "workflows", name)
+	if _, err := os.Stat(p); err != nil {
+		t.Errorf("missing default workflow file %s: %v", p, err)
 	}
 }
 
-// When workflow names are configured, the generated files must be written
-// at those configured names, not the defaults.
-func TestGenerate_HonorsConfiguredWorkflowNames(t *testing.T) {
+// When the workflow name is configured, the generated file must be
+// written at that name, not the default.
+func TestGenerate_HonorsConfiguredWorkflowName(t *testing.T) {
 	repo := t.TempDir()
 	cfg := validConfig + `workflows:
-  pending_release_file: prep.yml
-  publish_file: ship.yml
+  file: ship.yml
 `
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), cfg)
 
@@ -43,20 +40,15 @@ func TestGenerate_HonorsConfiguredWorkflowNames(t *testing.T) {
 		t.Fatalf("generate: %v\nstderr: %s", r.err, r.stderr)
 	}
 
-	for _, name := range []string{"prep.yml", "ship.yml"} {
-		p := filepath.Join(repo, ".github", "workflows", name)
-		if _, err := os.Stat(p); err != nil {
-			t.Errorf("missing configured workflow file %s: %v", p, err)
-		}
+	p := filepath.Join(repo, ".github", "workflows", "ship.yml")
+	if _, err := os.Stat(p); err != nil {
+		t.Errorf("missing configured workflow file %s: %v", p, err)
 	}
 
-	// The default-named workflows must not have been written as a side effect.
-	d := config.DefaultWorkflows()
-	for _, name := range []string{d.PendingReleaseFile, d.PublishFile} {
-		p := filepath.Join(repo, ".github", "workflows", name)
-		if _, err := os.Stat(p); err == nil {
-			t.Errorf("unexpected default-named workflow written: %s", p)
-		}
+	// The default-named workflow must not have been written as a side effect.
+	defaultName := config.DefaultWorkflows().File
+	if _, err := os.Stat(filepath.Join(repo, ".github", "workflows", defaultName)); err == nil {
+		t.Errorf("unexpected default-named workflow written: %s", defaultName)
 	}
 }
 

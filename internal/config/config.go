@@ -44,30 +44,25 @@ type Adapter struct {
 	Version Version `yaml:"version,omitempty" desc:"Locations of the project version string in the repo"`
 }
 
-// Workflows holds the names of the workflow files produced by `generate`.
-// File names are relative to .github/workflows/.
+// Workflows holds the name of the workflow file produced by `generate`.
+// The file name is relative to .github/workflows/.
 type Workflows struct {
-	PendingReleaseFile string `yaml:"pending_release_file,omitempty" desc:"Workflow file maintaining the pending-release pull request on every push to the default branch"`
-	PublishFile        string `yaml:"publish_file,omitempty"         desc:"Workflow file publishing the release when the pending-release pull request is merged"`
+	File string `yaml:"file,omitempty" desc:"Workflow file driving the release process (auto-detects prepare vs publish mode from the head commit)"`
 }
 
-// DefaultWorkflows returns the default file names used when the user does
-// not override them in their configuration.
+// DefaultWorkflows returns the default file name used when the user does
+// not override it in their configuration.
 func DefaultWorkflows() Workflows {
 	return Workflows{
-		PendingReleaseFile: "releaser-pending-release.yml",
-		PublishFile:        "releaser-publish.yml",
+		File: "releaser.yml",
 	}
 }
 
 // WithDefaults returns w with any unset fields filled in from DefaultWorkflows.
 func (w Workflows) WithDefaults() Workflows {
 	d := DefaultWorkflows()
-	if w.PendingReleaseFile == "" {
-		w.PendingReleaseFile = d.PendingReleaseFile
-	}
-	if w.PublishFile == "" {
-		w.PublishFile = d.PublishFile
+	if w.File == "" {
+		w.File = d.File
 	}
 	return w
 }

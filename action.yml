@@ -7,7 +7,7 @@ inputs:
     description: Releaser subcommand to invoke (e.g. "release", "release --dry-run").
     required: true
   app-id:
-    description: GitHub App ID. The App must be installed on the target repository with contents:write, pull-requests:write, and (when generated workflows are version-bumped) workflows:write installation permissions.
+    description: GitHub App ID. The App must be installed on the target repository with contents:write and pull-requests:write installation permissions.
     required: true
   app-installation-id:
     description: GitHub App installation ID for the target repository.

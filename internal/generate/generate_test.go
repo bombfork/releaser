@@ -11,7 +11,7 @@ import (
 	"github.com/bombfork/releaser/internal/generate"
 )
 
-func TestGenerate_RendersBothWorkflowsAtDefaultNames(t *testing.T) {
+func TestGenerate_RendersWorkflowAtDefaultName(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
 		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
@@ -22,39 +22,33 @@ func TestGenerate_RendersBothWorkflowsAtDefaultNames(t *testing.T) {
 		t.Fatalf("Generate: %v", err)
 	}
 
-	d := config.DefaultWorkflows()
-	for _, name := range []string{d.PendingReleaseFile, d.PublishFile} {
-		p := filepath.Join(repo, ".github", "workflows", name)
-		data, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatalf("missing %s: %v", p, err)
-		}
-		body := string(data)
-		if !strings.Contains(body, "bombfork/releaser@v1.2.3") {
-			t.Errorf("%s: action ref not substituted:\n%s", name, body)
-		}
-		// GitHub Actions expressions must survive untouched.
-		for _, want := range []string{
-			"${{ vars.RELEASER_APP_ID }}",
-			"${{ vars.RELEASER_APP_INSTALLATION_ID }}",
-			"${{ secrets.RELEASER_APP_PRIVATE_KEY }}",
-		} {
-			if !strings.Contains(body, want) {
-				t.Errorf("%s: expected %q in body:\n%s", name, want, body)
-			}
+	name := config.DefaultWorkflows().File
+	p := filepath.Join(repo, ".github", "workflows", name)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("missing %s: %v", p, err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "bombfork/releaser@v1.2.3") {
+		t.Errorf("action ref not substituted:\n%s", body)
+	}
+	for _, want := range []string{
+		"${{ vars.RELEASER_APP_ID }}",
+		"${{ vars.RELEASER_APP_INSTALLATION_ID }}",
+		"${{ secrets.RELEASER_APP_PRIVATE_KEY }}",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in body:\n%s", want, body)
 		}
 	}
 }
 
-func TestGenerate_HonorsConfiguredWorkflowNames(t *testing.T) {
+func TestGenerate_HonorsConfiguredWorkflowName(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
 		Config: config.Config{
-			Adapter: config.Adapter{Type: "generic"},
-			Workflows: config.Workflows{
-				PendingReleaseFile: "prep.yml",
-				PublishFile:        "ship.yml",
-			},
+			Adapter:   config.Adapter{Type: "generic"},
+			Workflows: config.Workflows{File: "ship.yml"},
 		},
 		Adapter:   generic.New(),
 		ActionRef: "main",
@@ -62,17 +56,11 @@ func TestGenerate_HonorsConfiguredWorkflowNames(t *testing.T) {
 	if err := generate.Generate(repo, in); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	for _, name := range []string{"prep.yml", "ship.yml"} {
-		if _, err := os.Stat(filepath.Join(repo, ".github", "workflows", name)); err != nil {
-			t.Errorf("missing %s: %v", name, err)
-		}
+	if _, err := os.Stat(filepath.Join(repo, ".github", "workflows", "ship.yml")); err != nil {
+		t.Errorf("missing ship.yml: %v", err)
 	}
-	// Defaults must not have been written.
-	d := config.DefaultWorkflows()
-	for _, name := range []string{d.PendingReleaseFile, d.PublishFile} {
-		if _, err := os.Stat(filepath.Join(repo, ".github", "workflows", name)); err == nil {
-			t.Errorf("unexpected default-named file: %s", name)
-		}
+	if _, err := os.Stat(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File)); err == nil {
+		t.Errorf("unexpected default-named file written alongside override")
 	}
 }
 
@@ -89,18 +77,15 @@ func TestGenerate_TriggerBranchFromConfig(t *testing.T) {
 	if err := generate.Generate(repo, in); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	d := config.DefaultWorkflows()
-	for _, name := range []string{d.PendingReleaseFile, d.PublishFile} {
-		body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if !strings.Contains(string(body), "- trunk") {
-			t.Errorf("%s: trigger branch not set to 'trunk':\n%s", name, body)
-		}
-		if strings.Contains(string(body), "- main\n") {
-			t.Errorf("%s: leaked default 'main' alongside override:\n%s", name, body)
-		}
+	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(body), "- trunk") {
+		t.Errorf("trigger branch not set to 'trunk':\n%s", body)
+	}
+	if strings.Contains(string(body), "- main\n") {
+		t.Errorf("leaked default 'main' alongside override:\n%s", body)
 	}
 }
 
@@ -114,19 +99,16 @@ func TestGenerate_TriggerBranchDefaultsToMain(t *testing.T) {
 	if err := generate.Generate(repo, in); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	d := config.DefaultWorkflows()
-	for _, name := range []string{d.PendingReleaseFile, d.PublishFile} {
-		body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if !strings.Contains(string(body), "- main") {
-			t.Errorf("%s: trigger branch missing default 'main':\n%s", name, body)
-		}
+	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(body), "- main") {
+		t.Errorf("trigger branch missing default 'main':\n%s", body)
 	}
 }
 
-func TestGenerate_BothWorkflowsExposeWorkflowDispatchWithDryRun(t *testing.T) {
+func TestGenerate_ExposesWorkflowDispatchWithModeAndDryRun(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
 		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
@@ -136,25 +118,52 @@ func TestGenerate_BothWorkflowsExposeWorkflowDispatchWithDryRun(t *testing.T) {
 	if err := generate.Generate(repo, in); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	d := config.DefaultWorkflows()
-	for _, name := range []string{d.PendingReleaseFile, d.PublishFile} {
-		body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if !strings.Contains(string(body), "workflow_dispatch:") {
-			t.Errorf("%s: missing workflow_dispatch trigger:\n%s", name, body)
-		}
-		if !strings.Contains(string(body), "dry_run:") {
-			t.Errorf("%s: missing dry_run input:\n%s", name, body)
-		}
-		if !strings.Contains(string(body), "inputs.dry_run && '--dry-run' || ''") {
-			t.Errorf("%s: dry_run not threaded into command:\n%s", name, body)
+	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	for _, want := range []string{
+		"workflow_dispatch:",
+		"mode:",
+		"type: choice",
+		"dry_run:",
+		"inputs.dry_run && '--dry-run' || ''",
+	} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("missing %q in body:\n%s", want, body)
 		}
 	}
 }
 
-func TestGenerate_PublishWorkflowUsesPushNotPullRequest(t *testing.T) {
+func TestGenerate_ModeDetectionUsesConfiguredBranchName(t *testing.T) {
+	repo := t.TempDir()
+	in := generate.Inputs{
+		Config: config.Config{
+			Adapter: config.Adapter{Type: "generic"},
+			Release: config.Release{BranchName: "custom/release-train"},
+		},
+		Adapter:   generic.New(),
+		ActionRef: "main",
+	}
+	if err := generate.Generate(repo, in); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(body), "RELEASE_BRANCH: custom/release-train") {
+		t.Errorf("configured branch name not threaded into detection step:\n%s", body)
+	}
+	// Both prepare and publish commands must be present as candidate outputs.
+	for _, want := range []string{`cmd="release prepare"`, `cmd="release publish"`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("missing %q in body:\n%s", want, body)
+		}
+	}
+}
+
+func TestGenerate_UsesPushNotPullRequest(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
 		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
@@ -164,18 +173,15 @@ func TestGenerate_PublishWorkflowUsesPushNotPullRequest(t *testing.T) {
 	if err := generate.Generate(repo, in); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().PublishFile))
+	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if strings.Contains(string(body), "pull_request:") {
-		t.Errorf("publish workflow still uses pull_request trigger:\n%s", body)
+		t.Errorf("workflow uses pull_request trigger:\n%s", body)
 	}
 	if !strings.Contains(string(body), "push:") {
-		t.Errorf("publish workflow missing push trigger:\n%s", body)
-	}
-	if strings.Contains(string(body), "merged == true") {
-		t.Errorf("publish workflow still gates on merged == true (push trigger doesn't need it):\n%s", body)
+		t.Errorf("workflow missing push trigger:\n%s", body)
 	}
 }
 
@@ -189,16 +195,17 @@ func TestGenerate_GenericAdapterAddsNoSetupSteps(t *testing.T) {
 	if err := generate.Generate(repo, in); err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	d := config.DefaultWorkflows()
-	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", d.PendingReleaseFile))
+	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File))
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	// No leaked Go-template delimiters should remain. (GitHub's own `${{ ... }}`
-	// uses curly braces, which is why our templates use `<<` / `>>`.)
-	for _, bad := range []string{"<<", ">>"} {
+	// No unrendered Go-template constructs should remain. We can't ban
+	// the bare delimiters because the workflow legitimately uses bash
+	// `>>` for appending to $GITHUB_OUTPUT; instead check for patterns
+	// that only appear in unrendered templates.
+	for _, bad := range []string{"<<-", "<< .", "<<end", "<< end", "<< range"} {
 		if strings.Contains(string(body), bad) {
-			t.Errorf("residual template delimiter %q in output:\n%s", bad, body)
+			t.Errorf("residual template construct %q in output:\n%s", bad, body)
 		}
 	}
 }

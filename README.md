@@ -16,10 +16,14 @@ The CLI is a single binary (`releaser`) with four subcommands:
 
 - Every commit on the default branch since the last release belongs to a pending release.
 - A single open pull request tracks the pending release: it bumps the project version in the configured locations and carries the draft release notes.
-- Merging the pending-release PR triggers the release workflow, which tags, publishes a GitHub release, builds the artifacts, and attaches them.
+- Merging the pending-release PR makes the same workflow publish the release: tag, GitHub release, build, asset upload.
 - The first commit on the default branch after a release re-opens a new pending-release PR.
 - Versions are computed from conventional commits (with a configurable mapping of commit types to bump levels). Manual releases accept user input.
 - All steps of the release workflow are idempotent: re-running a failed release only performs what is missing.
+
+A single generated workflow (`.github/workflows/releaser.yml` by default) drives both halves. On every push to the default branch — and on `workflow_dispatch` — a first step inspects the head commit and runs either `releaser release prepare` or `releaser release publish`. The detection signal is the head commit message: a `chore(release): prepare vX.Y.Z` prefix or a default merge-commit `from <owner>/<release-branch>` substring routes to publish; everything else routes to prepare. `workflow_dispatch` exposes a `mode` input (`auto` / `prepare` / `publish`) to override auto-detection when needed.
+
+The workflow pins the action ref it consumes (`uses: bombfork/releaser@vX.Y.Z`). That line is intentionally not in `adapter.version.locations`, because bumping it as part of the release PR would have the next release try to consume itself before publishing. After each release ships, bump the action ref by hand to the just-released tag.
 
 ## Installation
 

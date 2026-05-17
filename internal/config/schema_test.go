@@ -71,9 +71,9 @@ func TestBuildSchema_AdapterInfoInjectsDefaults(t *testing.T) {
 
 func TestBuildSchema_EngineDefaultsAreApplied(t *testing.T) {
 	s := config.BuildSchema(nil)
-	n := mustNode(t, s, "workflows.publish_file")
+	n := mustNode(t, s, "workflows.file")
 	if n.Default == "" {
-		t.Errorf("workflows.publish_file should carry a default from DefaultWorkflows()")
+		t.Errorf("workflows.file should carry a default from DefaultWorkflows()")
 	}
 	r := mustNode(t, s, "release.default_branch")
 	if r.Default == "" {
