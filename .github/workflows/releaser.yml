@@ -4,29 +4,28 @@
 # head commit and chooses between two modes:
 #
 #   - "release publish": when the head commit looks like the merge of
-#     the pending-release pull request (default merge-commit message
-#     contains "from <owner>/<release-branch>", or the head commit is a
-#     "chore(release): prepare vX.Y.Z" bump under squash / rebase
-#     strategies). Publishes the release.
+#     the pending-release pull request. Two signals are checked:
+#       * the message contains a "chore(release): prepare vX.Y.Z" line
+#         (covers rebase merge — that commit becomes HEAD; and squash
+#         merge — the line appears in the squash body as a bullet);
+#       * the first line contains "from <owner>/<release-branch>"
+#         (covers the default merge-commit strategy).
+#     Publishes the release.
 #   - "release prepare": otherwise. Keeps the pending-release pull
 #     request in sync with the unreleased commits on the default branch.
 #
 # Triggers: push to the default branch, plus workflow_dispatch with a
 # mode override (auto / prepare / publish) and an optional dry-run.
 #
-# Auto-detection caveats — when the head commit doesn't fit either
-# signal above, the workflow falls back to "release prepare". Use
-# workflow_dispatch with an explicit mode to force the other command.
-# Known cases:
-#   - Extra commits pushed onto the release branch before merging shift
-#     HEAD off the bump commit; under rebase merging, only the
-#     "chore(release): prepare v" prefix would have matched, so the
-#     auto-detect picks prepare.
-#   - Customized squash-merge messages that drop both the chore prefix
-#     and the "from .../<branch>" substring.
+# Auto-detection caveats — when neither signal matches, the workflow
+# falls back to "release prepare". Use workflow_dispatch with an
+# explicit mode to force the other command. Known cases:
+#   - Rebase merge with extra commits on top of the bump commit: HEAD
+#     becomes the extra commit and neither signal matches.
+#   - Customized squash-merge messages that strip the body (the body
+#     normally carries the original "chore(release): prepare v" commit,
+#     which is the squash signal).
 #   - release.branch_name changed while a pending-release PR was open.
-#
-# Manual fallback: workflow_dispatch with mode=publish (or mode=prepare).
 
 name: releaser
 
@@ -81,9 +80,13 @@ jobs:
                 msg=$(git log -1 --pretty=%B HEAD)
               fi
               first_line=$(printf '%s\n' "$msg" | head -n1)
-              prepare_re='^chore\(release\): prepare v'
+              # Match the prepare-commit subject anywhere in the message
+              # (with an optional leading "* " so squash-merge body bullets
+              # also count), and the branch substring on the first line
+              # (default merge-commit message format).
               branch_re='from [^[:space:]/]+/'"${RELEASE_BRANCH}"'([[:space:]]|$)'
-              if [[ "$first_line" =~ $prepare_re ]] || [[ "$first_line" =~ $branch_re ]]; then
+              if printf '%s\n' "$msg" | grep -qE '^(\* )?chore\(release\): prepare v' \
+                || [[ "$first_line" =~ $branch_re ]]; then
                 cmd="release publish"
               else
                 cmd="release prepare"

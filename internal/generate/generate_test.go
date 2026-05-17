@@ -161,6 +161,11 @@ func TestGenerate_ModeDetectionUsesConfiguredBranchName(t *testing.T) {
 			t.Errorf("missing %q in body:\n%s", want, body)
 		}
 	}
+	// The prepare-commit regex must allow an optional "* " prefix so that
+	// squash-merge body bullets are detected, not just the bare subject.
+	if !strings.Contains(string(body), `^(\* )?chore\(release\): prepare v`) {
+		t.Errorf("detection regex missing optional bullet prefix (squash-merge support):\n%s", body)
+	}
 }
 
 func TestGenerate_UsesPushNotPullRequest(t *testing.T) {
