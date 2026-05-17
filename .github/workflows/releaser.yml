@@ -97,7 +97,7 @@ jobs:
           echo "Selected command: $cmd"
 
       - name: Run releaser
-        uses: bombfork/releaser@v0.7.0
+        uses: bombfork/releaser@v0.8.0
         with:
           command: ${{ steps.mode.outputs.command }} ${{ inputs.dry_run && '--dry-run' || '' }}
           app-id: ${{ vars.RELEASER_APP_ID }}
