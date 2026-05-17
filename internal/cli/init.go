@@ -6,11 +6,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 
 	"github.com/bombfork/releaser/internal/adapter"
 	"github.com/bombfork/releaser/internal/adapters"
 	"github.com/bombfork/releaser/internal/config"
+	"github.com/bombfork/releaser/internal/tui"
 )
 
 func newInitCommand() *cobra.Command {
@@ -27,7 +29,13 @@ non-interactive initialization: it must supply every value the chosen
 adapter requires (after the adapter's autodetected defaults are applied).
 init does not fall back to prompting for missing fields when --from is
 supplied — if the merged configuration fails the adapter's validation,
-init exits with an error and writes nothing.`,
+init exits with an error and writes nothing.
+
+When --from is not given and stdin/stdout are a TTY, init launches an
+interactive flow that picks an adapter, gathers the fields the adapter
+validates, previews the resulting YAML, and writes the configuration on
+confirmation. When --from is not given and there is no TTY (CI), init
+fails with guidance directing the user to supply --from instead.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := cmd.Flags().GetString(RepoRootFlag)
 			if err != nil {
@@ -51,9 +59,32 @@ func runInit(repoRoot, fromPath string) error {
 	}
 
 	if fromPath == "" {
-		return errors.New("init: interactive mode is not yet implemented; supply --from <preset.yaml> (see bombfork/releaser#1)")
+		if !isInteractive() {
+			return errors.New("init: no --from <preset.yaml> supplied and stdin/stdout is not a TTY; supply --from for non-interactive use, or run in a terminal for the interactive flow")
+		}
+		return runInitInteractive(repoRoot)
 	}
 	return initFromPreset(repoRoot, fromPath)
+}
+
+func isInteractive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+func runInitInteractive(repoRoot string) error {
+	registry := adapters.DefaultRegistry()
+	res, err := tui.RunInit(os.Stdin, os.Stdout, repoRoot, registry)
+	if err != nil {
+		return err
+	}
+	ad, err := selectAdapter(repoRoot, &res.Config)
+	if err != nil {
+		return err
+	}
+	if err := ad.ValidateConfig(res.Config); err != nil {
+		return fmt.Errorf("interactive result failed %s adapter validation: %w", ad.Name(), err)
+	}
+	return config.Save(repoRoot, &res.Config)
 }
 
 func initFromPreset(repoRoot, fromPath string) error {

@@ -3,6 +3,7 @@ package cli_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -72,6 +73,25 @@ func TestInit_RefusesToClobberExistingConfig(t *testing.T) {
 	}
 	if string(raw) != "adapter:\n  type: generic\n# pre-existing\n" {
 		t.Errorf("existing config was modified by init:\n%s", raw)
+	}
+}
+
+// Running `releaser init` with no --from and no TTY (the in-process
+// test harness has neither stdin nor stdout attached to a terminal)
+// must fail with guidance, not launch the TUI or hang.
+func TestInit_NoFromNoTTY_ReturnsGuidanceError(t *testing.T) {
+	repo := t.TempDir()
+
+	r := runCLI(t, "init", "--repo-root", repo)
+	if r.err == nil {
+		t.Fatal("expected init to fail without --from and without a TTY")
+	}
+	msg := r.err.Error()
+	if !strings.Contains(msg, "TTY") || !strings.Contains(msg, "--from") {
+		t.Errorf("error message should mention TTY and --from; got: %q", msg)
+	}
+	if _, err := os.Stat(filepath.Join(repo, config.DefaultFilePath)); !os.IsNotExist(err) {
+		t.Errorf("config file should not have been written; stat err: %v", err)
 	}
 }
 
