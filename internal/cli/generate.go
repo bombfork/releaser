@@ -35,9 +35,9 @@ wrote the workflow, so the action and the binary are always in lockstep.`,
 			if err != nil {
 				return err
 			}
-			ref := resolveActionRef(actionRef)
-			pinned := pinActionRef(cmd.Context(), ref, cmd.ErrOrStderr(), defaultSHAResolver())
-			return runGenerate(repoRoot, pinned)
+			version := resolveActionRef(actionRef)
+			pinned := pinActionRef(cmd.Context(), version, cmd.ErrOrStderr(), defaultSHAResolver())
+			return runGenerate(repoRoot, pinned, version)
 		},
 	}
 
@@ -119,7 +119,7 @@ func isHexSHA(s string) bool {
 	return true
 }
 
-func runGenerate(repoRoot, actionRef string) error {
+func runGenerate(repoRoot, actionRef, actionVersion string) error {
 	cfg, err := config.Load(repoRoot)
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -132,8 +132,9 @@ func runGenerate(repoRoot, actionRef string) error {
 	}
 
 	return generate.Generate(repoRoot, generate.Inputs{
-		Config:    *cfg,
-		Adapter:   ad,
-		ActionRef: actionRef,
+		Config:        *cfg,
+		Adapter:       ad,
+		ActionRef:     actionRef,
+		ActionVersion: actionVersion,
 	})
 }

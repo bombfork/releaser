@@ -14,9 +14,10 @@ import (
 func TestGenerate_RendersWorkflowAtDefaultName(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{
-		Config:    config.Config{Adapter: config.Adapter{Type: "generic"}},
-		Adapter:   generic.New(),
-		ActionRef: "v1.2.3",
+		Config:        config.Config{Adapter: config.Adapter{Type: "generic"}},
+		Adapter:       generic.New(),
+		ActionRef:     "abcdef0123456789abcdef0123456789abcdef01 # v1.2.3",
+		ActionVersion: "v1.2.3",
 	}
 	if err := generate.Generate(repo, in); err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -29,8 +30,13 @@ func TestGenerate_RendersWorkflowAtDefaultName(t *testing.T) {
 		t.Fatalf("missing %s: %v", p, err)
 	}
 	body := string(data)
-	if !strings.Contains(body, "bombfork/releaser@v1.2.3") {
+	if !strings.Contains(body, "bombfork/releaser@abcdef0123456789abcdef0123456789abcdef01 # v1.2.3") {
 		t.Errorf("action ref not substituted:\n%s", body)
+	}
+	// The version input must be emitted alongside the SHA-pinned uses
+	// so the action can resolve the release-asset URL at runtime.
+	if !strings.Contains(body, "version: v1.2.3") {
+		t.Errorf("version input not emitted:\n%s", body)
 	}
 	for _, want := range []string{
 		"${{ vars.RELEASER_APP_ID }}",

@@ -99,6 +99,7 @@ jobs:
       - name: Run releaser
         uses: bombfork/releaser@<< .ActionRef >>
         with:
+          version: << .ActionVersion >>
           command: ${{ steps.mode.outputs.command }} ${{ inputs.dry_run && '--dry-run' || '' }}
           app-id: ${{ vars.RELEASER_APP_ID }}
           app-installation-id: ${{ vars.RELEASER_APP_INSTALLATION_ID }}

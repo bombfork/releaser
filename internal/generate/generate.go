@@ -28,9 +28,17 @@ var templatesFS embed.FS
 
 // Inputs holds everything Generate needs to render the workflow files.
 type Inputs struct {
-	Config    config.Config
-	Adapter   adapter.Adapter
+	Config  config.Config
+	Adapter adapter.Adapter
+	// ActionRef is the value placed after `bombfork/releaser@` in the
+	// generated workflow's `uses:` line. May be a tag (e.g. "v0.9.0")
+	// or a pinned form ("<sha> # v0.9.0").
 	ActionRef string
+	// ActionVersion is the bare tag/branch the generated workflow
+	// passes as `with: version:`. Required when ActionRef is a SHA pin
+	// (the action cannot recover the tag from a SHA at runtime); also
+	// emitted in the tag-pinned case for forward compatibility.
+	ActionVersion string
 }
 
 // Generate writes the workflow file under repoRoot/.github/workflows/.
@@ -45,6 +53,7 @@ func Generate(repoRoot string, in Inputs) error {
 	snippets := in.Adapter.WorkflowSnippets(in.Config)
 	data := templateData{
 		ActionRef:     in.ActionRef,
+		ActionVersion: in.ActionVersion,
 		DefaultBranch: release.DefaultBranch,
 		BranchName:    release.BranchName,
 		SetupSteps:    snippets.SetupSteps,
@@ -54,6 +63,7 @@ func Generate(repoRoot string, in Inputs) error {
 
 type templateData struct {
 	ActionRef     string
+	ActionVersion string
 	DefaultBranch string
 	BranchName    string
 	SetupSteps    []string

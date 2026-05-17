@@ -6,6 +6,16 @@ inputs:
   command:
     description: Releaser subcommand to invoke (e.g. "release", "release --dry-run").
     required: true
+  version:
+    description: |
+      Release tag of bombfork/releaser to consume (e.g. "v0.9.0"). Required when
+      the workflow pins this action to a commit SHA — at runtime the action
+      cannot recover the tag from a SHA, and the release-asset download URL is
+      tag-based. When unset, the action falls back to deriving the tag from
+      its checkout path's basename, which works only when `uses:` references a
+      tag directly.
+    required: false
+    default: ''
   app-id:
     description: GitHub App ID. The App must be installed on the target repository with contents:write and pull-requests:write installation permissions.
     required: true
@@ -26,14 +36,23 @@ runs:
     - name: Resolve action version
       id: version
       shell: bash
+      env:
+        VERSION_INPUT: ${{ inputs.version }}
       run: |
-        # github.action_ref is unreliable inside composite actions and
-        # shows as empty in some runner contexts. github.action_path is
-        # the directory the action was checked out into, ending in the
-        # ref it was called with — basename gives us the version.
-        ref="$(basename "${{ github.action_path }}")"
+        # Prefer the explicit `version` input — required when the caller
+        # pins this action by SHA, since the SHA can't be reverse-mapped
+        # to a release tag at runtime. Fall back to the basename of
+        # github.action_path (the ref the action was checked out at),
+        # which works for tag-pinned callers. github.action_ref is
+        # unreliable inside composite actions and shows as empty in some
+        # runner contexts, so it's not used here.
+        if [[ -n "${VERSION_INPUT}" ]]; then
+          ref="${VERSION_INPUT}"
+        else
+          ref="$(basename "${{ github.action_path }}")"
+        fi
         if [[ -z "${ref}" ]]; then
-          echo "could not resolve action version from github.action_path" >&2
+          echo "could not resolve action version: pass with: version: or use tag-pinned uses:" >&2
           exit 1
         fi
         echo "version=${ref}" >> "${GITHUB_OUTPUT}"
