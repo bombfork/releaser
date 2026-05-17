@@ -158,9 +158,15 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) (retErr err
 		if err != nil {
 			return fmt.Errorf("parse latest tag %q: %w", latestTag, err)
 		}
-		if !current.Greater(latest) {
+		// Only bail out when the version file is strictly behind the
+		// latest tag — creating a release for an older version against
+		// HEAD would associate it with the wrong commit. When current
+		// equals latest, fall through to the idempotent release/asset
+		// flow so a partially-completed previous publish (tag created,
+		// assets missing) still gets its assets uploaded.
+		if latest.Greater(current) {
 			report.Outcome = "noop"
-			logf(out, "Current version %s is not newer than the latest tag %s; publish is a no-op.\n", current, latestTag)
+			logf(out, "Current version %s is behind the latest tag %s; publish is a no-op.\n", current, latestTag)
 			return nil
 		}
 	}

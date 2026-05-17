@@ -388,9 +388,11 @@ func TestPublish_SummaryOnNoOp(t *testing.T) {
 	}
 	runIn(repo, "add", "Makefile")
 	runIn(repo, "commit", "-q", "-m", "chore: initial")
-	runIn(repo, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
+	// Tag is ahead of the version file — Publish should treat this as a
+	// no-op rather than try to re-create the older version's release.
+	runIn(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
 	runIn(repo, "push", "-q", "origin", "main")
-	runIn(repo, "push", "-q", "origin", "v0.1.0")
+	runIn(repo, "push", "-q", "origin", "v0.2.0")
 
 	httpClient, _ := buildPublishMock(t, publishMockBehavior{
 		getReleaseResponse: func(w http.ResponseWriter) {
@@ -427,7 +429,11 @@ func TestPublish_SummaryOnNoOp(t *testing.T) {
 	}
 }
 
-func TestPublish_CurrentMatchesLatestTagIsNoop(t *testing.T) {
+// Regression for issue #30: when the current version equals the latest
+// tag, Publish must run through the idempotent flow so a partially-
+// completed previous run (release + tag created, but no assets attached)
+// gets its assets uploaded on re-run.
+func TestPublish_CurrentMatchesLatestUploadsMissingAssets(t *testing.T) {
 	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
 	upstream := t.TempDir()
 	repo := t.TempDir()
@@ -445,8 +451,10 @@ func TestPublish_CurrentMatchesLatestTagIsNoop(t *testing.T) {
 	runIn(repo, "config", "commit.gpgsign", "false")
 	runIn(repo, "remote", "add", "origin", upstream)
 
-	// Makefile already at 0.1.0, tag v0.1.0 — current == latest.
-	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("VERSION := 0.1.0\n"), 0o644); err != nil {
+	// Makefile at 0.1.0, tag v0.1.0 — current == latest. Simulates the
+	// state right after a publish that created the tag and release but
+	// failed before uploading any assets.
+	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("VERSION := 0.1.0\nall:\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	runIn(repo, "add", "Makefile")
@@ -457,7 +465,61 @@ func TestPublish_CurrentMatchesLatestTagIsNoop(t *testing.T) {
 
 	httpClient, c := buildPublishMock(t, publishMockBehavior{
 		getReleaseResponse: func(w http.ResponseWriter) {
-			// Should not be called.
+			_ = json.NewEncoder(w).Encode(gh.RepositoryRelease{
+				ID:      gh.Ptr(int64(42)),
+				TagName: gh.Ptr("v0.1.0"),
+			})
+		},
+		listAssetsResponse: func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode([]gh.ReleaseAsset{})
+		},
+	})
+
+	if err := runPublish(t, repo, upstream, publishCfg(), httpClient); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	if got := c.createRel.Load(); got != 0 {
+		t.Errorf("CreateRelease count = %d, want 0 (release already exists)", got)
+	}
+	if got := c.uploadAsset.Load(); got != 2 {
+		t.Errorf("UploadAsset count = %d, want 2 (assets missing, should be uploaded)", got)
+	}
+}
+
+// When current version is strictly behind the latest tag (e.g. user
+// rolled the version file back), Publish should bail out without
+// touching the GitHub API rather than create the wrong release.
+func TestPublish_CurrentBehindLatestTagIsNoop(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+	upstream := t.TempDir()
+	repo := t.TempDir()
+	runIn := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runIn(upstream, "init", "-q", "--bare", "-b", "main")
+	runIn(repo, "init", "-q", "-b", "main")
+	runIn(repo, "config", "user.email", "t@example.com")
+	runIn(repo, "config", "user.name", "t")
+	runIn(repo, "config", "commit.gpgsign", "false")
+	runIn(repo, "remote", "add", "origin", upstream)
+
+	// Tag v0.2.0 ahead of the version file (which is at 0.1.0).
+	if err := os.WriteFile(filepath.Join(repo, "Makefile"), []byte("VERSION := 0.1.0\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runIn(repo, "add", "Makefile")
+	runIn(repo, "commit", "-q", "-m", "chore: initial")
+	runIn(repo, "tag", "-a", "v0.2.0", "-m", "v0.2.0")
+	runIn(repo, "push", "-q", "origin", "main")
+	runIn(repo, "push", "-q", "origin", "v0.2.0")
+
+	httpClient, c := buildPublishMock(t, publishMockBehavior{
+		getReleaseResponse: func(w http.ResponseWriter) {
 			mock.WriteError(w, http.StatusInternalServerError, "unexpected call to GetReleaseByTag")
 		},
 		listAssetsResponse: func(w http.ResponseWriter) {
