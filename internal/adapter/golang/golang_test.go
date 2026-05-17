@@ -182,6 +182,17 @@ func TestValidateConfig_RequiresOSAndArchOnEachTarget(t *testing.T) {
 	}
 }
 
+// The basic go adapter rejects adapter.setup_steps: it injects its own
+// setup-go step in WorkflowSnippets, so any user-supplied entries would
+// either be redundant or conflict with that.
+func TestValidateConfig_RejectsSetupSteps(t *testing.T) {
+	cfg := validBase()
+	cfg.Adapter.SetupSteps = []string{"- uses: actions/setup-node@v4"}
+	if err := golang.New().ValidateConfig(cfg); err == nil {
+		t.Error("expected error when adapter.setup_steps is set")
+	}
+}
+
 func TestWorkflowSnippets_OnlySetupGo(t *testing.T) {
 	s := golang.New().WorkflowSnippets(config.Config{})
 	if len(s.SetupSteps) != 1 {
@@ -278,5 +289,18 @@ func TestSchemaInfo_AgreesWithValidateConfig(t *testing.T) {
 		if _, ok := info.Defaults[p]; !ok {
 			t.Errorf("SchemaInfo.Defaults missing %q", p)
 		}
+	}
+	// adapter.setup_steps belongs to the generic adapter only; the go
+	// adapter must surface that rejection via SchemaInfo.Forbidden so
+	// `releaser config schema` advertises it consistently with
+	// ValidateConfig.
+	var setupStepsForbidden bool
+	for _, p := range info.Forbidden {
+		if p == "adapter.setup_steps" {
+			setupStepsForbidden = true
+		}
+	}
+	if !setupStepsForbidden {
+		t.Errorf("SchemaInfo.Forbidden missing %q (ValidateConfig rejects it)", "adapter.setup_steps")
 	}
 }

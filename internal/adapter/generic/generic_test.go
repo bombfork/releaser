@@ -158,3 +158,78 @@ func TestSchemaInfo_AgreesWithValidateConfig(t *testing.T) {
 		}
 	}
 }
+
+// validBaseForSetupSteps returns a minimum-viable generic-adapter
+// config used to exercise SetupSteps validation and snippet surfacing
+// without the noise of unrelated required fields.
+func validBaseForSetupSteps() config.Config {
+	return config.Config{
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "make build"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
+	}
+}
+
+func TestWorkflowSnippets_EmptyWhenNoSetupSteps(t *testing.T) {
+	s := generic.New().WorkflowSnippets(validBaseForSetupSteps())
+	if len(s.SetupSteps) != 0 {
+		t.Errorf("expected no setup steps, got %v", s.SetupSteps)
+	}
+}
+
+func TestWorkflowSnippets_SurfacesConfiguredSetupSteps(t *testing.T) {
+	cfg := validBaseForSetupSteps()
+	cfg.Adapter.SetupSteps = []string{
+		"- uses: jdx/mise-action@v2\n  with:\n    version: 2025.x",
+		"- uses: actions/setup-node@v4\n  with:\n    node-version: '20'",
+	}
+	s := generic.New().WorkflowSnippets(cfg)
+	if len(s.SetupSteps) != 2 {
+		t.Fatalf("got %d setup steps, want 2", len(s.SetupSteps))
+	}
+	for i, want := range cfg.Adapter.SetupSteps {
+		if s.SetupSteps[i] != want {
+			t.Errorf("SetupSteps[%d] = %q, want %q", i, s.SetupSteps[i], want)
+		}
+	}
+}
+
+func TestValidateConfig_AcceptsWellFormedSetupSteps(t *testing.T) {
+	cfg := validBaseForSetupSteps()
+	cfg.Adapter.SetupSteps = []string{
+		"- uses: jdx/mise-action@v2\n  with:\n    version: 2025.x",
+		"- run: echo hello",
+		"- name: install\n  uses: actions/setup-node@v4\n  with:\n    node-version: '20'",
+	}
+	if err := generic.New().ValidateConfig(cfg); err != nil {
+		t.Errorf("ValidateConfig: %v", err)
+	}
+}
+
+func TestValidateConfig_RejectsMalformedSetupSteps(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"empty", ""},
+		{"whitespace only", "   \n  "},
+		{"missing leading dash (mapping, not sequence)", "uses: actions/setup-node@v4\nwith:\n  node-version: '20'"},
+		{"raw scalar", "just a string"},
+		{"multi-step blob", "- run: echo one\n- run: echo two"},
+		{"malformed YAML", "- uses: 'unterminated"},
+		{"sequence item is a scalar", "- foo"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := validBaseForSetupSteps()
+			cfg.Adapter.SetupSteps = []string{tc.body}
+			if err := generic.New().ValidateConfig(cfg); err == nil {
+				t.Errorf("expected error for %q", tc.body)
+			}
+		})
+	}
+}

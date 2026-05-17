@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/bombfork/releaser/internal/adapter"
 	"github.com/bombfork/releaser/internal/config"
 )
@@ -48,6 +50,9 @@ func (*Adapter) SchemaInfo() config.AdapterInfo {
 
 // ValidateConfig enforces the minimum information the generic adapter needs
 // to drive a release: a build command and at least one version location.
+// Any user-supplied adapter.setup_steps are also sanity-checked: each
+// entry must be a YAML sequence containing exactly one mapping (i.e.
+// one GitHub Actions step starting with `-`).
 func (*Adapter) ValidateConfig(cfg config.Config) error {
 	if cfg.Adapter.Build.Command == "" {
 		return errors.New("generic adapter requires adapter.build.command")
@@ -55,12 +60,55 @@ func (*Adapter) ValidateConfig(cfg config.Config) error {
 	if len(cfg.Adapter.Version.Locations) == 0 {
 		return errors.New("generic adapter requires at least one adapter.version.locations entry")
 	}
+	for i, step := range cfg.Adapter.SetupSteps {
+		if err := validateSetupStep(step); err != nil {
+			return fmt.Errorf("adapter.setup_steps[%d]: %w", i, err)
+		}
+	}
 	return nil
 }
 
-// WorkflowSnippets contributes no stack-specific steps.
-func (*Adapter) WorkflowSnippets(_ config.Config) adapter.Snippets {
-	return adapter.Snippets{}
+// validateSetupStep checks that a single adapter.setup_steps entry is a
+// YAML sequence of length 1 whose item is a mapping. This matches the
+// shape stack adapters emit (one step per entry, starting with `-`) and
+// catches the obvious mistakes (forgotten leading `-`, multi-step blobs,
+// raw scalars) without micromanaging step contents.
+func validateSetupStep(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return errors.New("entry is empty")
+	}
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte(s), &node); err != nil {
+		return fmt.Errorf("parse YAML: %w", err)
+	}
+	// A document node wraps the actual content.
+	if node.Kind != yaml.DocumentNode || len(node.Content) != 1 {
+		return errors.New("entry must be a single YAML document containing one step")
+	}
+	seq := node.Content[0]
+	if seq.Kind != yaml.SequenceNode {
+		return errors.New("entry must start with '- ' (a YAML sequence containing one step)")
+	}
+	if len(seq.Content) != 1 {
+		return fmt.Errorf("entry must contain exactly one step, got %d", len(seq.Content))
+	}
+	if seq.Content[0].Kind != yaml.MappingNode {
+		return errors.New("step must be a mapping (e.g. 'uses: ...' or 'run: ...')")
+	}
+	return nil
+}
+
+// WorkflowSnippets surfaces the user's configured adapter.setup_steps.
+// The generic adapter has no built-in toolchain setup to inject, so this
+// is the user's escape hatch for projects whose build command needs a
+// runtime toolchain on PATH (mise, setup-node, etc.).
+func (*Adapter) WorkflowSnippets(cfg config.Config) adapter.Snippets {
+	if len(cfg.Adapter.SetupSteps) == 0 {
+		return adapter.Snippets{}
+	}
+	steps := make([]string, len(cfg.Adapter.SetupSteps))
+	copy(steps, cfg.Adapter.SetupSteps)
+	return adapter.Snippets{SetupSteps: steps}
 }
 
 // BuildEnv contributes no adapter-specific environment variables.

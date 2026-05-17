@@ -161,6 +161,24 @@ func TestValidateConfig_Happy(t *testing.T) {
 	}
 }
 
+// The goreleaser adapter rejects adapter.setup_steps: it injects
+// setup-go and goreleaser-action itself, so any user-supplied entries
+// would either be redundant or conflict with that.
+func TestValidateConfig_RejectsSetupSteps(t *testing.T) {
+	cfg := config.Config{
+		Adapter: config.Adapter{
+			Build: config.Build{Command: "goreleaser release"},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "internal/version.go", Regex: `^var Version = "(.*)"$`},
+			}},
+			SetupSteps: []string{"- uses: actions/setup-node@v4"},
+		},
+	}
+	if err := goreleaser.New().ValidateConfig(cfg); err == nil {
+		t.Error("expected error when adapter.setup_steps is set")
+	}
+}
+
 func TestWorkflowSnippets_IncludesSetupGoAndGoReleaser(t *testing.T) {
 	s := goreleaser.New().WorkflowSnippets(config.Config{})
 	if len(s.SetupSteps) != 2 {
@@ -244,5 +262,18 @@ func TestSchemaInfo_AgreesWithValidateConfig(t *testing.T) {
 		if p == "adapter.build.targets" {
 			t.Errorf("SchemaInfo.Required should not include adapter.build.targets (goreleaser owns its own matrix)")
 		}
+	}
+	// adapter.setup_steps belongs to the generic adapter only; the
+	// goreleaser adapter must surface that rejection via
+	// SchemaInfo.Forbidden so `releaser config schema` advertises it
+	// consistently with ValidateConfig.
+	var setupStepsForbidden bool
+	for _, p := range info.Forbidden {
+		if p == "adapter.setup_steps" {
+			setupStepsForbidden = true
+		}
+	}
+	if !setupStepsForbidden {
+		t.Errorf("SchemaInfo.Forbidden missing %q (ValidateConfig rejects it)", "adapter.setup_steps")
 	}
 }

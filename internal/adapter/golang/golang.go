@@ -97,6 +97,9 @@ func (*Adapter) SchemaInfo() config.AdapterInfo {
 			"adapter.build.targets",
 			"adapter.version.locations",
 		},
+		Forbidden: []string{
+			"adapter.setup_steps",
+		},
 		Defaults: map[string]string{
 			"adapter.build.command":   DefaultBuildCommand,
 			"adapter.build.artifacts": config.RenderYAMLDefault(DefaultArtifacts),
@@ -127,8 +130,13 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 // ValidateConfig enforces the minimum information the basic Go adapter
 // needs: build command, artifact glob, at least one version location,
 // and at least one (OS, Arch) target. Each target must specify both
-// fields.
+// fields. The adapter rejects adapter.setup_steps because it injects
+// its own setup-go step in WorkflowSnippets; users who need extra
+// toolchain steps should switch to the generic adapter.
 func (*Adapter) ValidateConfig(cfg config.Config) error {
+	if len(cfg.Adapter.SetupSteps) > 0 {
+		return errors.New("go adapter does not accept adapter.setup_steps (it manages its own toolchain setup); remove it or switch to the generic adapter")
+	}
 	if cfg.Adapter.Build.Command == "" {
 		return errors.New("go adapter requires adapter.build.command")
 	}

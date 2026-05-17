@@ -91,6 +91,9 @@ func (*Adapter) SchemaInfo() config.AdapterInfo {
 			"adapter.build.command",
 			"adapter.version.locations",
 		},
+		Forbidden: []string{
+			"adapter.setup_steps",
+		},
 		Defaults: map[string]string{
 			"adapter.build.command":   DefaultBuildCommand,
 			"adapter.build.artifacts": config.RenderYAMLDefault(DefaultArtifacts),
@@ -100,8 +103,14 @@ func (*Adapter) SchemaInfo() config.AdapterInfo {
 
 // ValidateConfig enforces the minimum information the goreleaser
 // adapter needs. Targets are intentionally not consulted here:
-// goreleaser owns its own target matrix via .goreleaser.yaml.
+// goreleaser owns its own target matrix via .goreleaser.yaml. The
+// adapter rejects adapter.setup_steps because it injects setup-go and
+// goreleaser-action itself in WorkflowSnippets; users who need extra
+// toolchain steps should switch to the generic adapter.
 func (*Adapter) ValidateConfig(cfg config.Config) error {
+	if len(cfg.Adapter.SetupSteps) > 0 {
+		return errors.New("goreleaser adapter does not accept adapter.setup_steps (it manages its own toolchain setup); remove it or switch to the generic adapter")
+	}
 	if cfg.Adapter.Build.Command == "" {
 		return errors.New("goreleaser adapter requires adapter.build.command")
 	}

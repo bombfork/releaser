@@ -196,6 +196,43 @@ func TestGenerate_UsesPushNotPullRequest(t *testing.T) {
 	}
 }
 
+func TestGenerate_GenericAdapterEmitsConfiguredSetupSteps(t *testing.T) {
+	repo := t.TempDir()
+	step := "- uses: jdx/mise-action@v2\n  with:\n    version: 2025.x"
+	in := generate.Inputs{
+		Config: config.Config{
+			Adapter: config.Adapter{
+				Type:       "generic",
+				SetupSteps: []string{step},
+			},
+		},
+		Adapter:   generic.New(),
+		ActionRef: "main",
+	}
+	if err := generate.Generate(repo, in); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// The setup step is inserted between the checkout step and the
+	// "Determine mode" step, indented to depth 6 to match the
+	// surrounding `steps:` sequence items.
+	want := "      - uses: jdx/mise-action@v2\n        with:\n          version: 2025.x"
+	if !strings.Contains(string(body), want) {
+		t.Errorf("configured setup step not rendered at depth 6:\nwant fragment:\n%s\n\ngot body:\n%s", want, body)
+	}
+	// Ordering: the step must appear AFTER the checkout step and
+	// BEFORE the "Determine mode" step.
+	checkoutIdx := strings.Index(string(body), "actions/checkout@")
+	setupIdx := strings.Index(string(body), "jdx/mise-action@v2")
+	modeIdx := strings.Index(string(body), "name: Determine mode")
+	if checkoutIdx >= setupIdx || setupIdx >= modeIdx {
+		t.Errorf("setup step out of order: checkout=%d setup=%d mode=%d\n%s", checkoutIdx, setupIdx, modeIdx, body)
+	}
+}
+
 func TestGenerate_GenericAdapterAddsNoSetupSteps(t *testing.T) {
 	repo := t.TempDir()
 	in := generate.Inputs{

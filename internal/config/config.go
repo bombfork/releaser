@@ -39,9 +39,10 @@ type Config struct {
 // discriminator selects which adapter's validation, autodetection, and
 // workflow-generation rules apply.
 type Adapter struct {
-	Type    string  `yaml:"type"              desc:"Stack adapter identifier (e.g. generic, go, goreleaser)"`
-	Build   Build   `yaml:"build"             desc:"Build command and artifact glob"`
-	Version Version `yaml:"version,omitempty" desc:"Locations of the project version string in the repo"`
+	Type       string   `yaml:"type"                   desc:"Stack adapter identifier (e.g. generic, go, goreleaser)"`
+	Build      Build    `yaml:"build"                  desc:"Build command and artifact glob"`
+	Version    Version  `yaml:"version,omitempty"      desc:"Locations of the project version string in the repo"`
+	SetupSteps []string `yaml:"setup_steps,omitempty"  desc:"Raw GitHub Actions step YAML fragments injected before the build command runs (generic adapter only; stack adapters reject this field — they own their toolchain setup). Each entry is one step starting with '- uses:' / '- run:' etc."`
 }
 
 // Workflows holds the name of the workflow file produced by `generate`.
