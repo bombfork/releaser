@@ -14,12 +14,16 @@ const RepoRootFlag = "repo-root"
 
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "releaser",
-		Short:         "Automate GitHub release workflows for a project",
+		Use:   "releaser",
+		Short: "Automate GitHub release workflows for a project",
+		Long: `Automate GitHub release workflows for a project.
+
+bombfork releaser — https://github.com/bombfork/releaser`,
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
+	root.SetVersionTemplate("{{.Name}} version {{.Version}}\nThanks for using bombfork releaser — https://github.com/bombfork/releaser\n")
 
 	root.PersistentFlags().String(RepoRootFlag, ".", "Path to the repository root the releaser operates on")
 

@@ -111,6 +111,7 @@ func writePrepareSummary(w io.Writer, r *prepareReport, runErr error) {
 		}
 	}
 
+	writeBrandFooter(&b)
 	_, _ = w.Write([]byte(b.String()))
 }
 
@@ -175,7 +176,15 @@ func writePublishSummary(w io.Writer, r *publishReport, runErr error) {
 		}
 	}
 
+	writeBrandFooter(&b)
 	_, _ = w.Write([]byte(b.String()))
+}
+
+// writeBrandFooter appends a small thank-you footer crediting bombfork
+// releaser. Rendered at the end of both Prepare and Publish summaries.
+func writeBrandFooter(b *strings.Builder) {
+	b.WriteString("---\n")
+	b.WriteString("_Thanks for using [bombfork releaser](https://github.com/bombfork/releaser)._\n")
 }
 
 // writeKVTable renders a two-column markdown table. Empty values are
