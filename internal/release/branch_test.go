@@ -50,6 +50,33 @@ func TestResetBranchFromRef_CreatesAndChecksOutBranch(t *testing.T) {
 	}
 }
 
+// Regression for issue #31: gitignored / untracked files in the worktree
+// (e.g. a local .env) must survive the branch reset.
+func TestResetBranchFromRef_PreservesUntrackedFiles(t *testing.T) {
+	_, local := initBareUpstreamWithLocalClone(t)
+
+	envPath := filepath.Join(local, ".env")
+	if err := os.WriteFile(envPath, []byte("SECRET=hunter2\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	gitignorePath := filepath.Join(local, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(".env\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	if err := release.ResetBranchFromRef(local, "releaser/pending-release", "refs/heads/main"); err != nil {
+		t.Fatalf("ResetBranchFromRef: %v", err)
+	}
+
+	got, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf(".env was removed: %v", err)
+	}
+	if string(got) != "SECRET=hunter2\n" {
+		t.Errorf(".env contents = %q, want preserved original", got)
+	}
+}
+
 func TestCommitWithIdentity_StagesAllAndUsesIdentity(t *testing.T) {
 	_, local := initBareUpstreamWithLocalClone(t)
 	if err := release.ResetBranchFromRef(local, "releaser/pending-release", "refs/heads/main"); err != nil {

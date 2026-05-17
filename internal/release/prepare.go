@@ -197,6 +197,21 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 		return describePreparePlan(out, in, plan, defaultBranch, branchName, identity, commitMsg, title, body, report)
 	}
 
+	// Capture HEAD before we move it onto the release branch so the
+	// deferred restore can put the developer back on the branch they
+	// invoked Prepare from. Capture only matters for the side-effectful
+	// path; dry-run and the no-op/already-prepared early returns above
+	// never leave HEAD elsewhere.
+	origHEAD, err := CaptureHEAD(repoRoot)
+	if err != nil {
+		return fmt.Errorf("capture HEAD: %w", err)
+	}
+	defer func() {
+		if err := RestoreHEAD(repoRoot, origHEAD); err != nil {
+			logf(out, "Warning: could not restore original branch: %v\n", err)
+		}
+	}()
+
 	if err := ResetBranchFromRef(repoRoot, branchName, originDefaultRef); err != nil {
 		return fmt.Errorf("reset branch: %w", err)
 	}

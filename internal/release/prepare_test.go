@@ -541,3 +541,86 @@ func TestPrepare_NoBumpableCommitsIsNoop(t *testing.T) {
 		t.Errorf("PR list count = %d, want 0 (no release warranted)", got)
 	}
 }
+
+// Regression for issue #31: a successful Prepare run must not remove
+// untracked / gitignored files from the user's working clone.
+func TestPrepare_PreservesUntrackedFiles(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+
+	upstream, local := initPrepareFixture(t)
+
+	envPath := filepath.Join(local, ".env")
+	if err := os.WriteFile(envPath, []byte("SECRET=hunter2\n"), 0o644); err != nil {
+		t.Fatalf("write .env: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(local, ".gitignore"), []byte(".env\n"), 0o644); err != nil {
+		t.Fatalf("write .gitignore: %v", err)
+	}
+
+	cfg := config.Config{
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
+	}
+	httpClient, _ := buildPrepareMock(t)
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_testtoken"}
+
+	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		RemoteURL: upstream,
+	}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	got, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf(".env was removed by Prepare: %v", err)
+	}
+	if string(got) != "SECRET=hunter2\n" {
+		t.Errorf(".env contents after Prepare = %q, want preserved", got)
+	}
+}
+
+// Regression for issue #31: after Prepare completes, the worktree must
+// be back on whatever branch the caller invoked it from — not stuck on
+// the release branch Prepare maintains internally.
+func TestPrepare_RestoresOriginalBranch(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+
+	upstream, local := initPrepareFixture(t)
+
+	cfg := config.Config{
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
+	}
+	httpClient, _ := buildPrepareMock(t)
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_testtoken"}
+
+	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		RemoteURL: upstream,
+	}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	out, err := exec.Command("git", "-C", local, "branch", "--show-current").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --show-current: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "main" {
+		t.Errorf("current branch after Prepare = %q, want main", got)
+	}
+}
