@@ -17,6 +17,12 @@ import (
 //
 // Tags whose short names do not parse as a Semver (per ParseSemver) are
 // ignored.
+//
+// This walks the local clone's tag refs. Publish derives its "latest
+// tag" from the GitHub API instead — see github.Client.ListTagNames
+// combined with HighestSemverTag — so that local-only or stale tags
+// can't skew the decision. Plan-building code still uses this function
+// because it needs to look up a tag's commit hash locally anyway.
 func LatestVersionTag(repoRoot string) (string, error) {
 	repo, err := git.PlainOpen(repoRoot)
 	if err != nil {

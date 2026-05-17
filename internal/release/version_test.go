@@ -70,3 +70,25 @@ func TestSemver_BumpFromZero(t *testing.T) {
 		}
 	}
 }
+
+func TestHighestSemverTag(t *testing.T) {
+	tests := map[string]struct {
+		in   []string
+		want string
+	}{
+		"empty":               {nil, ""},
+		"single":              {[]string{"v1.0.0"}, "v1.0.0"},
+		"unsorted":            {[]string{"v0.1.0", "v1.2.3", "v0.9.9"}, "v1.2.3"},
+		"mixed_prefixes":      {[]string{"1.0.0", "v1.1.0", "v0.9.9"}, "v1.1.0"},
+		"ignores_non_semver":  {[]string{"latest", "v1.0.0", "release-candidate"}, "v1.0.0"},
+		"all_non_semver":      {[]string{"latest", "rc1"}, ""},
+		"preserves_input_str": {[]string{"v2.0.0", "2.0.0"}, "v2.0.0"},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := release.HighestSemverTag(tc.in); got != tc.want {
+				t.Errorf("HighestSemverTag(%v) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

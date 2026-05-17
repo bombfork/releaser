@@ -60,6 +60,30 @@ func (c *Client) GetRepo(ctx context.Context, owner, repo string) (*Repo, error)
 	return &Repo{DefaultBranch: r.GetDefaultBranch()}, nil
 }
 
+// ListTagNames returns every tag name reachable on the remote, in the
+// order the GitHub API returns them. Pagination is handled
+// transparently. This is the authoritative source for "what tags exist
+// on the repository" — preferred over reading the local clone's tag
+// refs, which can include stale or local-only tags.
+func (c *Client) ListTagNames(ctx context.Context, owner, repo string) ([]string, error) {
+	var out []string
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		page, resp, err := c.gh.Repositories.ListTags(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, fmt.Errorf("list tags for %s/%s: %w", owner, repo, err)
+		}
+		for _, t := range page {
+			out = append(out, t.GetName())
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return out, nil
+}
+
 // --- Releases ---------------------------------------------------------
 
 // GetReleaseByTag returns the release attached to the given tag, or

@@ -23,6 +23,26 @@ type Semver struct {
 // Zero is the initial version used when no prior release tag exists.
 var Zero = Semver{0, 0, 0}
 
+// HighestSemverTag returns the highest-precedence semver-shaped name in
+// names, or "" if none parse as a Semver. Names that ParseSemver
+// rejects are silently ignored — this mirrors how releaser's local
+// LatestVersionTag treats junk tags.
+func HighestSemverTag(names []string) string {
+	var bestName string
+	var best Semver
+	for _, n := range names {
+		v, err := ParseSemver(n)
+		if err != nil {
+			continue
+		}
+		if bestName == "" || v.Greater(best) {
+			best = v
+			bestName = n
+		}
+	}
+	return bestName
+}
+
 // ParseSemver parses "v1.2.3" or "1.2.3". The leading "v" is optional.
 // Returns an error for anything else (pre-release/build metadata or
 // non-numeric segments).

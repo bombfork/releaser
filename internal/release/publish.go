@@ -45,7 +45,7 @@ type PublishInputs struct {
 	Force bool
 
 	// DryRun runs the read-only steps (Fetch, GetRepo, ReadVersion,
-	// LatestVersionTag, GetReleaseByTag, ListReleaseAssets, BuildPlan)
+	// ListTagNames, GetReleaseByTag, ListReleaseAssets, BuildPlan)
 	// and prints a description of what the real run would do, but
 	// performs no release creation, runs no build, and uploads no
 	// assets. Safety-check failures become warnings in this mode.
@@ -143,10 +143,15 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) (retErr err
 	}
 	logf(out, "Current version: %s\n", current)
 
-	latestTag, err := LatestVersionTag(repoRoot)
+	// Use the remote tag list — not the local clone's tag refs — so the
+	// "latest tag" decision is authoritative regardless of local-state
+	// drift (stale tags from a previous fetch, local-only experimental
+	// tags, missed fetches in unusual workflows).
+	remoteTags, err := in.GitHubClient.ListTagNames(ctx, owner, repoName)
 	if err != nil {
-		return fmt.Errorf("read latest tag: %w", err)
+		return fmt.Errorf("list remote tags: %w", err)
 	}
+	latestTag := HighestSemverTag(remoteTags)
 	report.PrevTag = latestTag
 	if latestTag == "" {
 		logln(out, "Latest tag: (none — initial release)")

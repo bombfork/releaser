@@ -85,6 +85,7 @@ type publishCounters struct {
 	getRelease  atomic.Int32
 	createRel   atomic.Int32
 	listAssets  atomic.Int32
+	listTags    atomic.Int32
 	uploadAsset atomic.Int32
 }
 
@@ -97,6 +98,10 @@ type publishMockBehavior struct {
 	listAssetsResponse  func(w http.ResponseWriter)
 	createRelResponse   func(w http.ResponseWriter)
 	uploadAssetResponse func(w http.ResponseWriter)
+	// listTagsResponse provides the JSON-encoded list of remote tags
+	// Publish reads to decide the latest released version. When nil,
+	// the mock returns the fixture's default (v0.1.0 already tagged).
+	listTagsResponse func(w http.ResponseWriter)
 }
 
 func buildPublishMock(t *testing.T, b publishMockBehavior) (*http.Client, *publishCounters) {
@@ -116,6 +121,21 @@ func buildPublishMock(t *testing.T, b publishMockBehavior) (*http.Client, *publi
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				c.getRelease.Add(1)
 				b.getReleaseResponse(w)
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposTagsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				c.listTags.Add(1)
+				if b.listTagsResponse != nil {
+					b.listTagsResponse(w)
+					return
+				}
+				// Default fixture: a single tag matching what initPublishFixture
+				// pushed locally, so existing tests continue to see latest=v0.1.0.
+				_ = json.NewEncoder(w).Encode([]gh.RepositoryTag{
+					{Name: gh.Ptr("v0.1.0")},
+				})
 			}),
 		),
 		mock.WithRequestMatchHandler(
@@ -395,6 +415,9 @@ func TestPublish_SummaryOnNoOp(t *testing.T) {
 	runIn(repo, "push", "-q", "origin", "v0.2.0")
 
 	httpClient, _ := buildPublishMock(t, publishMockBehavior{
+		listTagsResponse: func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode([]gh.RepositoryTag{{Name: gh.Ptr("v0.2.0")}})
+		},
 		getReleaseResponse: func(w http.ResponseWriter) {
 			mock.WriteError(w, http.StatusInternalServerError, "unexpected")
 		},
@@ -426,6 +449,50 @@ func TestPublish_SummaryOnNoOp(t *testing.T) {
 		if !strings.Contains(summary.String(), want) {
 			t.Errorf("no-op summary missing %q; full content:\n%s", want, summary.String())
 		}
+	}
+}
+
+// Regression for issue #32: the "latest tag" decision must come from
+// the remote tag list, not the local clone. A local-only tag that was
+// never pushed (e.g. a developer's experiment) must not influence
+// what Publish considers already released.
+func TestPublish_IgnoresLocalOnlyTagInLatestDecision(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+	upstream, repo := initPublishFixture(t)
+	// Add a phantom local tag that is NOT on the remote. If the latest-
+	// tag decision came from local refs, this would short-circuit
+	// Publish as a no-op (v9.9.9 > current 0.2.0). With the remote-tag
+	// source, it should be ignored entirely.
+	runIn := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runIn("tag", "-a", "v9.9.9", "-m", "local only")
+
+	httpClient, c := buildPublishMock(t, publishMockBehavior{
+		// Remote only knows about v0.1.0 — the fixture's pushed tag.
+		listTagsResponse: func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode([]gh.RepositoryTag{{Name: gh.Ptr("v0.1.0")}})
+		},
+		getReleaseResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusNotFound, "release not found")
+		},
+		listAssetsResponse: func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode([]gh.ReleaseAsset{})
+		},
+	})
+
+	if err := runPublish(t, repo, upstream, publishCfg(), httpClient); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if got := c.createRel.Load(); got != 1 {
+		t.Errorf("CreateRelease count = %d, want 1 (local v9.9.9 should be ignored)", got)
+	}
+	if got := c.uploadAsset.Load(); got != 2 {
+		t.Errorf("UploadAsset count = %d, want 2", got)
 	}
 }
 
@@ -519,6 +586,9 @@ func TestPublish_CurrentBehindLatestTagIsNoop(t *testing.T) {
 	runIn(repo, "push", "-q", "origin", "v0.2.0")
 
 	httpClient, c := buildPublishMock(t, publishMockBehavior{
+		listTagsResponse: func(w http.ResponseWriter) {
+			_ = json.NewEncoder(w).Encode([]gh.RepositoryTag{{Name: gh.Ptr("v0.2.0")}})
+		},
 		getReleaseResponse: func(w http.ResponseWriter) {
 			mock.WriteError(w, http.StatusInternalServerError, "unexpected call to GetReleaseByTag")
 		},

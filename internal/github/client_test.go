@@ -78,6 +78,27 @@ func TestCreateRelease_Happy(t *testing.T) {
 	}
 }
 
+func TestListTagNames_Happy(t *testing.T) {
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatch(
+			mock.GetReposTagsByOwnerByRepo,
+			[]gh.RepositoryTag{
+				{Name: gh.Ptr("v1.2.0")},
+				{Name: gh.Ptr("v1.1.0")},
+				{Name: gh.Ptr("v1.0.0")},
+			},
+		),
+	)
+	c := releasergh.NewClient(httpClient)
+	names, err := c.ListTagNames(context.Background(), "owner", "repo")
+	if err != nil {
+		t.Fatalf("ListTagNames: %v", err)
+	}
+	if len(names) != 3 || names[0] != "v1.2.0" || names[2] != "v1.0.0" {
+		t.Errorf("got %v", names)
+	}
+}
+
 func TestListReleaseAssets_Happy(t *testing.T) {
 	httpClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatch(
