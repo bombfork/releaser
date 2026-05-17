@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -9,6 +12,7 @@ import (
 	"github.com/bombfork/releaser/internal/adapters"
 	"github.com/bombfork/releaser/internal/config"
 	"github.com/bombfork/releaser/internal/generate"
+	"github.com/bombfork/releaser/internal/github"
 )
 
 func newGenerateCommand() *cobra.Command {
@@ -31,7 +35,9 @@ wrote the workflow, so the action and the binary are always in lockstep.`,
 			if err != nil {
 				return err
 			}
-			return runGenerate(repoRoot, resolveActionRef(actionRef))
+			ref := resolveActionRef(actionRef)
+			pinned := pinActionRef(cmd.Context(), ref, cmd.ErrOrStderr(), defaultSHAResolver())
+			return runGenerate(repoRoot, pinned)
 		},
 	}
 
@@ -55,6 +61,62 @@ func resolveActionRef(userSupplied string) string {
 		return Version
 	}
 	return "v" + Version
+}
+
+// shaResolver looks up the commit SHA for a bombfork/releaser ref. The
+// indirection lets tests substitute a fake without needing a mocked
+// HTTP client.
+type shaResolver func(ctx context.Context, ref string) (string, error)
+
+// defaultSHAResolver returns a resolver backed by an unauthenticated
+// GitHub client. `releaser generate` is a developer-local command and
+// the ref lookup is a single public-repo read; the anonymous rate limit
+// is plenty.
+func defaultSHAResolver() shaResolver {
+	c := github.NewClient(nil)
+	return func(ctx context.Context, ref string) (string, error) {
+		return c.ResolveRefToSHA(ctx, "bombfork", "releaser", ref)
+	}
+}
+
+// pinActionRef rewrites a ref like "v0.8.0" into "<sha> # v0.8.0" so the
+// generated workflow consumes a commit-pinned action, reducing the
+// blast radius of a compromised upstream tag. Refs that already encode
+// a pin (contain "#") or are themselves a bare 40-char hex SHA pass
+// through unchanged. If the resolver call fails (e.g. offline, no such
+// ref) the original ref is returned with a warning written to stderr.
+func pinActionRef(ctx context.Context, ref string, stderr io.Writer, resolve shaResolver) string {
+	if ref == "" || strings.Contains(ref, "#") || isHexSHA(ref) {
+		return ref
+	}
+	sha, err := resolve(ctx, ref)
+	if err != nil {
+		// Warning output is best-effort; failing the generate command
+		// because we couldn't print a warning would be perverse.
+		if errors.Is(err, github.ErrNotFound) {
+			_, _ = fmt.Fprintf(stderr, "Warning: ref %q does not resolve to a commit on bombfork/releaser; leaving unpinned.\n", ref)
+		} else {
+			_, _ = fmt.Fprintf(stderr, "Warning: could not resolve %q to a commit SHA; leaving unpinned: %v\n", ref, err)
+		}
+		return ref
+	}
+	return sha + " # " + ref
+}
+
+// isHexSHA reports whether s looks like a full-length git commit SHA.
+func isHexSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func runGenerate(repoRoot, actionRef string) error {

@@ -60,6 +60,20 @@ func (c *Client) GetRepo(ctx context.Context, owner, repo string) (*Repo, error)
 	return &Repo{DefaultBranch: r.GetDefaultBranch()}, nil
 }
 
+// ResolveRefToSHA returns the commit SHA the given ref points at. Ref
+// can be a tag (annotated or lightweight), a branch name, or a SHA
+// (which round-trips). Returns ErrNotFound if the ref does not exist.
+func (c *Client) ResolveRefToSHA(ctx context.Context, owner, repo, ref string) (string, error) {
+	commit, _, err := c.gh.Repositories.GetCommit(ctx, owner, repo, ref, nil)
+	if err != nil {
+		if is404(err) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("resolve %s/%s@%s: %w", owner, repo, ref, err)
+	}
+	return commit.GetSHA(), nil
+}
+
 // ListTagNames returns every tag name reachable on the remote, in the
 // order the GitHub API returns them. Pagination is handled
 // transparently. This is the authoritative source for "what tags exist

@@ -78,6 +78,39 @@ func TestCreateRelease_Happy(t *testing.T) {
 	}
 }
 
+func TestResolveRefToSHA_Happy(t *testing.T) {
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatch(
+			mock.GetReposCommitsByOwnerByRepoByRef,
+			gh.RepositoryCommit{SHA: gh.Ptr("0123456789abcdef0123456789abcdef01234567")},
+		),
+	)
+	c := releasergh.NewClient(httpClient)
+	sha, err := c.ResolveRefToSHA(context.Background(), "owner", "repo", "v1.0.0")
+	if err != nil {
+		t.Fatalf("ResolveRefToSHA: %v", err)
+	}
+	if sha != "0123456789abcdef0123456789abcdef01234567" {
+		t.Errorf("got %q", sha)
+	}
+}
+
+func TestResolveRefToSHA_NotFoundReturnsSentinel(t *testing.T) {
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatchHandler(
+			mock.GetReposCommitsByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				mock.WriteError(w, http.StatusNotFound, "no such ref")
+			}),
+		),
+	)
+	c := releasergh.NewClient(httpClient)
+	_, err := c.ResolveRefToSHA(context.Background(), "owner", "repo", "v9.9.9")
+	if !errors.Is(err, releasergh.ErrNotFound) {
+		t.Errorf("got %v, want ErrNotFound", err)
+	}
+}
+
 func TestListTagNames_Happy(t *testing.T) {
 	httpClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatch(
