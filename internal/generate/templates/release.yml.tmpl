@@ -108,5 +108,5 @@ jobs:
 <<- else if eq .AuthMode "token" >>
           token: ${{ secrets.<< .AuthTokenSecret >> }}
 <<- else >>
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ github.token }}
 <<- end >>
