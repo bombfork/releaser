@@ -101,6 +101,12 @@ jobs:
         with:
           version: << .ActionVersion >>
           command: ${{ steps.mode.outputs.command }} ${{ inputs.dry_run && '--dry-run' || '' }}
-          app-id: ${{ vars.RELEASER_APP_ID }}
-          app-installation-id: ${{ vars.RELEASER_APP_INSTALLATION_ID }}
-          app-private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}
+<<- if eq .AuthMode "github_app" >>
+          app-id: ${{ vars.<< .AuthAppIDVar >> }}
+          app-installation-id: ${{ vars.<< .AuthInstallationIDVar >> }}
+          app-private-key: ${{ secrets.<< .AuthPrivateKeySecret >> }}
+<<- else if eq .AuthMode "token" >>
+          token: ${{ secrets.<< .AuthTokenSecret >> }}
+<<- else >>
+          token: ${{ secrets.GITHUB_TOKEN }}
+<<- end >>

@@ -45,7 +45,7 @@ type Inputs struct {
 // The file name comes from in.Config.Workflows (with defaults filled in).
 func Generate(repoRoot string, in Inputs) error {
 	workflows := in.Config.Workflows.WithDefaults()
-	release := in.Config.Release.WithDefaults()
+	rel := in.Config.Release.WithDefaults()
 	dir := filepath.Join(repoRoot, ".github", "workflows")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("mkdir %s: %w", dir, err)
@@ -54,19 +54,33 @@ func Generate(repoRoot string, in Inputs) error {
 	data := templateData{
 		ActionRef:     in.ActionRef,
 		ActionVersion: in.ActionVersion,
-		DefaultBranch: release.DefaultBranch,
-		BranchName:    release.BranchName,
+		DefaultBranch: rel.DefaultBranch,
+		BranchName:    rel.BranchName,
 		SetupSteps:    snippets.SetupSteps,
+		AuthMode:      string(rel.Auth.Mode),
+	}
+	if rel.Auth.App != nil {
+		data.AuthAppIDVar = rel.Auth.App.AppIDVar
+		data.AuthInstallationIDVar = rel.Auth.App.InstallationIDVar
+		data.AuthPrivateKeySecret = rel.Auth.App.PrivateKeySecret
+	}
+	if rel.Auth.Token != nil {
+		data.AuthTokenSecret = rel.Auth.Token.Secret
 	}
 	return renderTo(filepath.Join(dir, workflows.File), "release.yml.tmpl", data)
 }
 
 type templateData struct {
-	ActionRef     string
-	ActionVersion string
-	DefaultBranch string
-	BranchName    string
-	SetupSteps    []string
+	ActionRef             string
+	ActionVersion         string
+	DefaultBranch         string
+	BranchName            string
+	SetupSteps            []string
+	AuthMode              string
+	AuthAppIDVar          string
+	AuthInstallationIDVar string
+	AuthPrivateKeySecret  string
+	AuthTokenSecret       string
 }
 
 func renderTo(dest, name string, data templateData) error {

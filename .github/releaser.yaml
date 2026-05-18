@@ -22,3 +22,9 @@ adapter:
               regex: ^var Version = "(.*)"$
 release:
     default_branch: main
+    auth:
+        mode: github_app
+        app:
+            app_id_var: RELEASER_APP_ID
+            installation_id_var: RELEASER_APP_INSTALLATION_ID
+            private_key_secret: RELEASER_APP_PRIVATE_KEY

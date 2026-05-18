@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -129,6 +130,9 @@ func runReleasePrepare(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 	if err != nil {
 		return err
 	}
+	if err := applyAppBotIdentity(cmd.Context(), cfg); err != nil {
+		return err
+	}
 	tp, err := github.DefaultTokenProvider()
 	if err != nil {
 		return fmt.Errorf("resolve token provider: %w", err)
@@ -192,6 +196,9 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 	if err != nil {
 		return err
 	}
+	if err := applyAppBotIdentity(cmd.Context(), cfg); err != nil {
+		return err
+	}
 	tp, err := github.DefaultTokenProvider()
 	if err != nil {
 		return fmt.Errorf("resolve token provider: %w", err)
@@ -213,6 +220,30 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 		DryRun:        dryRun,
 		Summary:       sw,
 	})
+}
+
+// applyAppBotIdentity patches cfg.Release.BotIdentity from the GitHub
+// API when auth.mode is github_app. Kept at the CLI entry so the
+// `release` package's ResolveIdentity stays a pure function of (repo,
+// config). No-op in any other auth mode, or outside CI (no env vars to
+// read from).
+func applyAppBotIdentity(ctx context.Context, cfg *config.Config) error {
+	if cfg.Release.Auth.Mode != config.AuthModeGitHubApp {
+		return nil
+	}
+	env := release.ReadAppBotIdentityEnv()
+	if env.AppID == "" || env.PrivateKeyPEM == "" {
+		// Not in an environment where the App credentials are
+		// available — leave cfg alone. ResolveIdentity will fall
+		// back to the configured (or default) BotIdentity.
+		return nil
+	}
+	id, err := release.AppBotIdentity(ctx, env, nil)
+	if err != nil {
+		return fmt.Errorf("derive app bot identity: %w", err)
+	}
+	cfg.Release.BotIdentity = config.BotIdentity{Name: id.Name, Email: id.Email}
+	return nil
 }
 
 // loadConfigAndAdapter loads the on-disk configuration and resolves its

@@ -60,6 +60,11 @@ func EngineDefaults() map[string]string {
 	d["release.default_branch"] = r.DefaultBranch
 	d["release.bot_identity.name"] = r.BotIdentity.Name
 	d["release.bot_identity.email"] = r.BotIdentity.Email
+	d["release.auth.mode"] = string(r.Auth.Mode)
+	d["release.auth.app.app_id_var"] = DefaultAuthAppIDVar
+	d["release.auth.app.installation_id_var"] = DefaultAuthInstallationIDVar
+	d["release.auth.app.private_key_secret"] = DefaultAuthPrivateKeySecret
+	d["release.auth.token.secret"] = DefaultAuthTokenSecret
 	return d
 }
 

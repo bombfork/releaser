@@ -91,6 +91,9 @@ func runInitInteractive(ctx context.Context, repoRoot string, stderr io.Writer, 
 	if err := ad.ValidateConfig(res.Config); err != nil {
 		return fmt.Errorf("interactive result failed %s adapter validation: %w", ad.Name(), err)
 	}
+	if err := res.Config.Release.WithDefaults().ValidateAuth(); err != nil {
+		return fmt.Errorf("interactive result has invalid release.auth: %w", err)
+	}
 	if err := config.Save(repoRoot, &res.Config); err != nil {
 		return err
 	}
@@ -188,6 +191,9 @@ func initFromPreset(repoRoot, fromPath string) error {
 
 	if err := ad.ValidateConfig(merged); err != nil {
 		return fmt.Errorf("preset does not satisfy %s adapter: %w", ad.Name(), err)
+	}
+	if err := merged.Release.WithDefaults().ValidateAuth(); err != nil {
+		return fmt.Errorf("preset has invalid release.auth: %w", err)
 	}
 	return config.Save(repoRoot, &merged)
 }

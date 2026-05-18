@@ -38,14 +38,92 @@ func TestGenerate_RendersWorkflowAtDefaultName(t *testing.T) {
 	if !strings.Contains(body, "version: v1.2.3") {
 		t.Errorf("version input not emitted:\n%s", body)
 	}
-	for _, want := range []string{
-		"${{ vars.RELEASER_APP_ID }}",
-		"${{ vars.RELEASER_APP_INSTALLATION_ID }}",
-		"${{ secrets.RELEASER_APP_PRIVATE_KEY }}",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("expected %q in body:\n%s", want, body)
-		}
+}
+
+func TestGenerate_AuthModeRendersExpectedInputs(t *testing.T) {
+	cases := []struct {
+		name   string
+		auth   config.Auth
+		want   []string
+		forbid []string
+	}{
+		{
+			name: "github_app",
+			auth: config.Auth{
+				Mode: config.AuthModeGitHubApp,
+				App: &config.AuthApp{
+					AppIDVar:          "RELEASER_APP_ID",
+					InstallationIDVar: "RELEASER_APP_INSTALLATION_ID",
+					PrivateKeySecret:  "RELEASER_APP_PRIVATE_KEY",
+				},
+			},
+			want: []string{
+				"app-id: ${{ vars.RELEASER_APP_ID }}",
+				"app-installation-id: ${{ vars.RELEASER_APP_INSTALLATION_ID }}",
+				"app-private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}",
+			},
+			forbid: []string{"token:"},
+		},
+		{
+			name: "token",
+			auth: config.Auth{
+				Mode:  config.AuthModeToken,
+				Token: &config.AuthToken{Secret: "RELEASER_GH_TOKEN"},
+			},
+			want: []string{
+				"token: ${{ secrets.RELEASER_GH_TOKEN }}",
+			},
+			forbid: []string{"app-id:", "app-installation-id:", "app-private-key:"},
+		},
+		{
+			name: "default_token",
+			auth: config.Auth{Mode: config.AuthModeDefaultToken},
+			want: []string{
+				"token: ${{ secrets.GITHUB_TOKEN }}",
+			},
+			forbid: []string{"app-id:", "app-installation-id:", "app-private-key:"},
+		},
+		{
+			name: "empty auth (defaults to default_token)",
+			auth: config.Auth{},
+			want: []string{
+				"token: ${{ secrets.GITHUB_TOKEN }}",
+			},
+			forbid: []string{"app-id:", "app-installation-id:", "app-private-key:"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			in := generate.Inputs{
+				Config: config.Config{
+					Adapter: config.Adapter{Type: "generic"},
+					Release: config.Release{Auth: tc.auth},
+				},
+				Adapter:       generic.New(),
+				ActionRef:     "main",
+				ActionVersion: "v1.0.0",
+			}
+			if err := generate.Generate(repo, in); err != nil {
+				t.Fatalf("Generate: %v", err)
+			}
+			body, err := os.ReadFile(filepath.Join(repo, ".github", "workflows", config.DefaultWorkflows().File))
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			s := string(body)
+			for _, want := range tc.want {
+				if !strings.Contains(s, want) {
+					t.Errorf("expected %q in body:\n%s", want, s)
+				}
+			}
+			for _, forbid := range tc.forbid {
+				if strings.Contains(s, forbid) {
+					t.Errorf("did not expect %q in body:\n%s", forbid, s)
+				}
+			}
+		})
 	}
 }
 

@@ -17,14 +17,28 @@ inputs:
     required: false
     default: ''
   app-id:
-    description: GitHub App ID. The App must be installed on the target repository with contents:write and pull-requests:write installation permissions.
-    required: true
+    description: |
+      GitHub App ID. Pair with `app-installation-id` and `app-private-key`
+      to authenticate as a GitHub App installation. The App must be
+      installed on the target repository with contents:write and
+      pull-requests:write permissions. Mutually exclusive with `token`.
+    required: false
+    default: ''
   app-installation-id:
     description: GitHub App installation ID for the target repository.
-    required: true
+    required: false
+    default: ''
   app-private-key:
     description: GitHub App private key in PEM format. Pass via a secret.
-    required: true
+    required: false
+    default: ''
+  token:
+    description: |
+      GitHub API token. Pass `secrets.GITHUB_TOKEN`, a PAT, or any other
+      installation/access token. Mutually exclusive with the `app-*`
+      inputs.
+    required: false
+    default: ''
   working-directory:
     description: Directory in which to run the releaser command.
     required: false
@@ -33,6 +47,38 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Validate authentication inputs
+      shell: bash
+      env:
+        APP_ID: ${{ inputs.app-id }}
+        APP_INST_ID: ${{ inputs.app-installation-id }}
+        APP_PEM: ${{ inputs.app-private-key }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        app_any=false
+        if [[ -n "${APP_ID}" || -n "${APP_INST_ID}" || -n "${APP_PEM}" ]]; then
+          app_any=true
+        fi
+        token_set=false
+        if [[ -n "${TOKEN}" ]]; then
+          token_set=true
+        fi
+        if [[ "${app_any}" == "true" && "${token_set}" == "true" ]]; then
+          echo "::error::releaser: pass either the app-* inputs or token, not both" >&2
+          exit 1
+        fi
+        if [[ "${app_any}" == "true" ]]; then
+          if [[ -z "${APP_ID}" || -z "${APP_INST_ID}" || -z "${APP_PEM}" ]]; then
+            echo "::error::releaser: when using GitHub App auth, all of app-id, app-installation-id, and app-private-key must be set" >&2
+            exit 1
+          fi
+        fi
+        if [[ "${app_any}" == "false" && "${token_set}" == "false" ]]; then
+          echo "::error::releaser: no authentication provided. Pass either app-id/app-installation-id/app-private-key, or token (e.g. \${{ secrets.GITHUB_TOKEN }})" >&2
+          exit 1
+        fi
+
     - name: Resolve action version
       id: version
       shell: bash
@@ -108,6 +154,7 @@ runs:
         GH_TKN_APP_ID: ${{ inputs.app-id }}
         GH_TKN_APP_INST_ID: ${{ inputs.app-installation-id }}
         GH_TKN_APP_PRIVATE_KEY: ${{ inputs.app-private-key }}
+        GH_TKN: ${{ inputs.token }}
         RELEASER_BIN: ${{ runner.tool_cache }}/releaser/${{ steps.version.outputs.version }}/releaser
         RELEASER_ARGS: ${{ inputs.command }}
       run: |

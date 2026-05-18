@@ -28,6 +28,29 @@ func press(t *testing.T, m Model, key tea.KeyType) Model {
 	return out.(Model)
 }
 
+// chooseDefaultTokenAuth advances past stepAuth by picking the
+// default_token mode (the third option). Most existing tests are
+// indifferent to which mode is in use — they exercise downstream
+// behavior — so default_token (zero extra inputs) keeps them concise.
+func chooseDefaultTokenAuth(t *testing.T, m Model) Model {
+	t.Helper()
+	if m.step != stepAuth {
+		t.Fatalf("chooseDefaultTokenAuth: step = %v, want stepAuth", m.step)
+	}
+	// authPickMode default is authModeIdxDefault (idx 2). Two downs
+	// would be needed from idx 0, but the model initializes to the
+	// default; just press Enter.
+	m = press(t, m, tea.KeyEnter)
+	if m.authSubstep != authDefaultInfo {
+		t.Fatalf("after auth pick: substep = %d, want authDefaultInfo", m.authSubstep)
+	}
+	m = press(t, m, tea.KeyEnter)
+	if m.step != stepAdvancedPrompt {
+		t.Fatalf("after default-token info: step = %v, want stepAdvancedPrompt", m.step)
+	}
+	return m
+}
+
 // Happy path: pick generic, fill build (ctrl+s submit) + artifacts + version,
 // answer "No" on advanced, confirm preview. Resulting Config must validate.
 func TestModel_HappyPathGenericAdapter(t *testing.T) {
@@ -71,9 +94,10 @@ func TestModel_HappyPathGenericAdapter(t *testing.T) {
 	}
 	m = typeString(t, m, `^VERSION := (.*)$`)
 	m = press(t, m, tea.KeyEnter)
-	if m.step != stepAdvancedPrompt {
-		t.Fatalf("after regex enter: step = %v, want stepAdvancedPrompt", m.step)
+	if m.step != stepAuth {
+		t.Fatalf("after regex enter: step = %v, want stepAuth", m.step)
 	}
+	m = chooseDefaultTokenAuth(t, m)
 	if m.err != "" {
 		t.Fatalf("unexpected validation error: %q", m.err)
 	}
@@ -319,6 +343,7 @@ func TestModel_AdvancedPromptDefaultsToNo(t *testing.T) {
 	m = press(t, m, tea.KeyTab)
 	m = typeString(t, m, `^VERSION := (.*)$`)
 	m = press(t, m, tea.KeyEnter)
+	m = chooseDefaultTokenAuth(t, m)
 
 	if m.step != stepAdvancedPrompt {
 		t.Fatalf("step = %v, want stepAdvancedPrompt", m.step)
@@ -377,6 +402,7 @@ func walkToPreview(t *testing.T, repoRoot string) Model {
 	m = press(t, m, tea.KeyTab)
 	m = typeString(t, m, `^VERSION := (.*)$`)
 	m = press(t, m, tea.KeyEnter) // version locations
+	m = chooseDefaultTokenAuth(t, m)
 	m = press(t, m, tea.KeyEnter) // skip advanced (default "No")
 	if m.step != stepPreview {
 		t.Fatalf("walkToPreview: step = %v, want stepPreview", m.step)
@@ -480,6 +506,7 @@ func TestModel_BootstrapVersionFallsBackToCustomWhenNoMatch(t *testing.T) {
 	m = press(t, m, tea.KeyTab)
 	m = typeString(t, m, `^VERSION := (.*)$`)
 	m = press(t, m, tea.KeyEnter) // version locations
+	m = chooseDefaultTokenAuth(t, m)
 	m = press(t, m, tea.KeyEnter) // skip advanced
 	m = press(t, m, tea.KeyEnter) // preview confirm
 	m = press(t, m, tea.KeyEnter) // generate Yes
@@ -499,6 +526,134 @@ func TestModel_BootstrapVersionFallsBackToCustomWhenNoMatch(t *testing.T) {
 	}
 	if got := m.FirstVersion(); got != "0.5.0" {
 		t.Errorf("FirstVersion() = %q, want 0.5.0", got)
+	}
+}
+
+// driveToAuth advances a fresh model up to the stepAuth pick-mode
+// substep. Used by the auth-mode-specific tests below.
+func driveToAuth(t *testing.T) Model {
+	t.Helper()
+	registry := adapters.DefaultRegistry()
+	m := NewModel(t.TempDir(), registry)
+	m = press(t, m, tea.KeyEnter) // generic
+	m = typeString(t, m, "make build")
+	m = press(t, m, tea.KeyCtrlS)
+	m = typeString(t, m, "dist/*")
+	m = press(t, m, tea.KeyEnter)
+	m = typeString(t, m, "Makefile")
+	m = press(t, m, tea.KeyTab)
+	m = typeString(t, m, `^VERSION := (.*)$`)
+	m = press(t, m, tea.KeyEnter) // -> stepAuth
+	if m.step != stepAuth {
+		t.Fatalf("driveToAuth: step = %v, want stepAuth", m.step)
+	}
+	return m
+}
+
+func TestModel_AuthGitHubAppHappyPath(t *testing.T) {
+	m := driveToAuth(t)
+	// Up twice to land on the first choice (GitHub App).
+	m = press(t, m, tea.KeyUp)
+	m = press(t, m, tea.KeyUp)
+	if m.authModeIdx != authModeIdxApp {
+		t.Fatalf("authModeIdx = %d, want App", m.authModeIdx)
+	}
+	m = press(t, m, tea.KeyEnter)
+	if m.authSubstep != authAppFields {
+		t.Fatalf("substep = %d, want authAppFields", m.authSubstep)
+	}
+	// Three Enters: first two advance focus, third confirms.
+	m = press(t, m, tea.KeyEnter)
+	m = press(t, m, tea.KeyEnter)
+	m = press(t, m, tea.KeyEnter)
+	if m.step != stepAdvancedPrompt {
+		t.Fatalf("after app fields: step = %v, want stepAdvancedPrompt", m.step)
+	}
+	// Skip the advanced prompt (No is pre-selected) and check config.
+	m = press(t, m, tea.KeyEnter)
+	cfg := m.Config()
+	if cfg.Release.Auth.Mode != "github_app" {
+		t.Errorf("Mode = %q, want github_app", cfg.Release.Auth.Mode)
+	}
+	if cfg.Release.Auth.App == nil {
+		t.Fatalf("Auth.App is nil")
+	}
+	if cfg.Release.Auth.App.AppIDVar != "RELEASER_APP_ID" {
+		t.Errorf("AppIDVar = %q", cfg.Release.Auth.App.AppIDVar)
+	}
+	if cfg.Release.Auth.App.PrivateKeySecret != "RELEASER_APP_PRIVATE_KEY" {
+		t.Errorf("PrivateKeySecret = %q", cfg.Release.Auth.App.PrivateKeySecret)
+	}
+	if cfg.Release.Auth.Token != nil {
+		t.Errorf("Auth.Token = %+v, want nil", cfg.Release.Auth.Token)
+	}
+}
+
+func TestModel_AuthTokenRequiresBotIdentity(t *testing.T) {
+	m := driveToAuth(t)
+	// Default idx is authModeIdxDefault (2); Up once -> token (1).
+	m = press(t, m, tea.KeyUp)
+	if m.authModeIdx != authModeIdxToken {
+		t.Fatalf("authModeIdx = %d, want Token", m.authModeIdx)
+	}
+	m = press(t, m, tea.KeyEnter)
+	if m.authSubstep != authTokenFields {
+		t.Fatalf("substep = %d, want authTokenFields", m.authSubstep)
+	}
+	// Tab to the bot name field (index 1), clear it (it's empty already),
+	// tab to email, then press enter on the last field — should reject.
+	m = press(t, m, tea.KeyTab)
+	m = press(t, m, tea.KeyTab)
+	if m.authFieldFocus != 2 {
+		t.Fatalf("focus = %d, want 2 (email)", m.authFieldFocus)
+	}
+	m = press(t, m, tea.KeyEnter)
+	if m.step != stepAuth {
+		t.Fatalf("step advanced despite missing bot identity: %v", m.step)
+	}
+	if m.err == "" {
+		t.Errorf("expected validation error for missing bot identity")
+	}
+
+	// Fill bot identity and retry.
+	m.authBotName.SetValue("myorg-releaser[bot]")
+	m.authBotEmail.SetValue("12345+myorg-releaser[bot]@users.noreply.github.com")
+	m = press(t, m, tea.KeyEnter)
+	if m.step != stepAdvancedPrompt {
+		t.Fatalf("after fill + enter: step = %v, want stepAdvancedPrompt", m.step)
+	}
+	m = press(t, m, tea.KeyEnter) // skip advanced
+	cfg := m.Config()
+	if cfg.Release.Auth.Mode != "token" {
+		t.Errorf("Mode = %q, want token", cfg.Release.Auth.Mode)
+	}
+	if cfg.Release.Auth.Token == nil || cfg.Release.Auth.Token.Secret != "RELEASER_GH_TOKEN" {
+		t.Errorf("Auth.Token = %+v", cfg.Release.Auth.Token)
+	}
+	if cfg.Release.BotIdentity.Name != "myorg-releaser[bot]" {
+		t.Errorf("BotIdentity.Name = %q", cfg.Release.BotIdentity.Name)
+	}
+}
+
+func TestModel_AuthDefaultTokenShowsInfoAndProceeds(t *testing.T) {
+	m := driveToAuth(t)
+	// default mode is pre-selected (idx 2). Enter -> info screen.
+	m = press(t, m, tea.KeyEnter)
+	if m.authSubstep != authDefaultInfo {
+		t.Fatalf("substep = %d, want authDefaultInfo", m.authSubstep)
+	}
+	// Info screen advances on Enter.
+	m = press(t, m, tea.KeyEnter)
+	if m.step != stepAdvancedPrompt {
+		t.Fatalf("step = %v, want stepAdvancedPrompt", m.step)
+	}
+	m = press(t, m, tea.KeyEnter) // skip advanced
+	cfg := m.Config()
+	if cfg.Release.Auth.Mode != "default_token" {
+		t.Errorf("Mode = %q, want default_token", cfg.Release.Auth.Mode)
+	}
+	if cfg.Release.Auth.App != nil || cfg.Release.Auth.Token != nil {
+		t.Errorf("Auth sub-blocks = %+v %+v, want both nil", cfg.Release.Auth.App, cfg.Release.Auth.Token)
 	}
 }
 
