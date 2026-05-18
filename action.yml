@@ -34,7 +34,7 @@ inputs:
     default: ''
   token:
     description: |
-      GitHub API token. Pass `secrets.GITHUB_TOKEN`, a PAT, or any other
+      GitHub API token. Pass `github.token`, a PAT, or any other
       installation/access token. Mutually exclusive with the `app-*`
       inputs.
     required: false
@@ -75,7 +75,7 @@ runs:
           fi
         fi
         if [[ "${app_any}" == "false" && "${token_set}" == "false" ]]; then
-          echo "::error::releaser: no authentication provided. Pass either app-id/app-installation-id/app-private-key, or token (e.g. \${{ secrets.GITHUB_TOKEN }})" >&2
+          echo "::error::releaser: no authentication provided. Pass either app-id/app-installation-id/app-private-key, or token (e.g. \${{ github.token }})" >&2
           exit 1
         fi
 
