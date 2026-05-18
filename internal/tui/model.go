@@ -24,6 +24,7 @@ import (
 
 	"github.com/bombfork/releaser/internal/adapter"
 	"github.com/bombfork/releaser/internal/config"
+	"github.com/bombfork/releaser/internal/release"
 )
 
 type step int
@@ -37,7 +38,20 @@ const (
 	stepAdvancedPrompt
 	stepAdvanced
 	stepPreview
+	stepBootstrapGeneratePrompt
+	stepBootstrapPRPrompt
+	stepBootstrapVersion
 )
+
+// Sub-steps within stepBootstrapVersion.
+const (
+	bumpPatch = iota
+	bumpMinor
+	bumpMajor
+	bumpCustom
+)
+
+var bumpChoices = []string{"patch", "minor", "major", "custom"}
 
 // Sub-steps within stepTargets.
 const (
@@ -109,6 +123,17 @@ type Model struct {
 
 	preview     viewport.Model
 	previewYAML string
+
+	// Bootstrap prompts (after preview confirmation).
+	bootstrapGenerateIdx  int    // 0 = Yes, 1 = No (default Yes)
+	bootstrapGenerate     bool   // user's answer once confirmed
+	bootstrapPRIdx        int    // 0 = Yes, 1 = No (default Yes)
+	bootstrapPR           bool   // user's answer once confirmed
+	bootstrapCurrent      string // current version parsed from first version-location (empty when none)
+	bootstrapBumpIdx      int
+	bootstrapCustomInput  textinput.Model
+	bootstrapCustomActive bool   // true while the custom-version input is focused
+	bootstrapFirstVersion string // chosen first version (no leading "v")
 }
 
 // NewModel builds the initial Model. The chosen adapter is preselected
@@ -145,6 +170,7 @@ func NewModel(repoRoot string, registry *adapter.Registry) Model {
 	m.advBotEmail = newInputWith(defRel.BotIdentity.Email)
 
 	m.preview = viewport.New(78, 18)
+	m.bootstrapCustomInput = newInput("semver, e.g. 0.1.0")
 
 	return m
 }
@@ -179,6 +205,18 @@ func (m Model) Init() tea.Cmd { return textinput.Blink }
 // Done reports whether the user reached the final confirmation. A model
 // can also exit via Aborted (user cancelled) — callers must check both.
 func (m Model) Done() bool { return m.done }
+
+// GenerateWorkflows reports whether the user opted to generate the
+// release workflow files as part of init.
+func (m Model) GenerateWorkflows() bool { return m.bootstrapGenerate }
+
+// OpenBootstrapPR reports whether the user opted to also commit the
+// workflows + version bump on a branch and open the bootstrap PR.
+func (m Model) OpenBootstrapPR() bool { return m.bootstrapPR }
+
+// FirstVersion is the chosen first release version (no leading "v").
+// Only meaningful when OpenBootstrapPR returns true.
+func (m Model) FirstVersion() string { return m.bootstrapFirstVersion }
 
 // Aborted reports whether the user cancelled the flow with esc or ctrl+c.
 func (m Model) Aborted() bool { return m.aborted }
@@ -256,6 +294,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateAdvanced(msg)
 	case stepPreview:
 		return m.updatePreview(msg)
+	case stepBootstrapGeneratePrompt:
+		return m.updateBootstrapGeneratePrompt(msg)
+	case stepBootstrapPRPrompt:
+		return m.updateBootstrapPRPrompt(msg)
+	case stepBootstrapVersion:
+		return m.updateBootstrapVersion(msg)
 	}
 	return m, nil
 }
@@ -619,8 +663,9 @@ func (m Model) updatePreview(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Don't allow confirm when validation is failing.
 				return m, nil
 			}
-			m.done = true
-			return m, tea.Quit
+			m.step = stepBootstrapGeneratePrompt
+			m.bootstrapGenerateIdx = 0
+			return m, nil
 		case "e", "E":
 			m.step = stepBuildCommand
 			m.buildCmd.Focus()
@@ -631,6 +676,168 @@ func (m Model) updatePreview(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.preview, cmd = m.preview.Update(msg)
 	return m, cmd
+}
+
+func (m Model) updateBootstrapGeneratePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.Type {
+	case tea.KeyUp:
+		if m.bootstrapGenerateIdx > 0 {
+			m.bootstrapGenerateIdx--
+		}
+	case tea.KeyDown:
+		if m.bootstrapGenerateIdx < 1 {
+			m.bootstrapGenerateIdx++
+		}
+	case tea.KeyEnter:
+		m.bootstrapGenerate = m.bootstrapGenerateIdx == 0
+		if !m.bootstrapGenerate {
+			m.done = true
+			return m, tea.Quit
+		}
+		m.step = stepBootstrapPRPrompt
+		m.bootstrapPRIdx = 0
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) updateBootstrapPRPrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.Type {
+	case tea.KeyUp:
+		if m.bootstrapPRIdx > 0 {
+			m.bootstrapPRIdx--
+		}
+	case tea.KeyDown:
+		if m.bootstrapPRIdx < 1 {
+			m.bootstrapPRIdx++
+		}
+	case tea.KeyEnter:
+		m.bootstrapPR = m.bootstrapPRIdx == 0
+		if !m.bootstrapPR {
+			m.done = true
+			return m, tea.Quit
+		}
+		m = m.enterBootstrapVersion()
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+// enterBootstrapVersion reads the current value from the first
+// version-location and primes the version step. When no current value
+// is available (file missing, regex no match, or unparseable) the step
+// drops straight into the custom-input variant.
+func (m Model) enterBootstrapVersion() Model {
+	m.step = stepBootstrapVersion
+	m.bootstrapCurrent = ""
+	m.bootstrapBumpIdx = bumpMinor
+	m.bootstrapCustomActive = false
+	m.err = ""
+	cfg := m.Config()
+	if len(cfg.Adapter.Version.Locations) > 0 {
+		raw, _ := release.ReadCurrentVersion(m.repoRoot, cfg.Adapter.Version.Locations[0])
+		if raw != "" {
+			if _, err := release.ParseSemver(raw); err == nil {
+				m.bootstrapCurrent = strings.TrimPrefix(raw, "v")
+			}
+		}
+	}
+	if m.bootstrapCurrent == "" {
+		// No usable current value — go straight to free-form input.
+		m.bootstrapBumpIdx = bumpCustom
+		m.bootstrapCustomActive = true
+		m.bootstrapCustomInput.Focus()
+	}
+	return m
+}
+
+func (m Model) updateBootstrapVersion(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.bootstrapCustomActive {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			switch key.Type {
+			case tea.KeyEnter:
+				return m.commitBootstrapVersion(strings.TrimSpace(m.bootstrapCustomInput.Value()))
+			case tea.KeyEsc:
+				// already handled at top level
+			default:
+				if m.bootstrapCurrent != "" && (key.Type == tea.KeyTab || key.Type == tea.KeyShiftTab) {
+					// Tab back to the bump-choice list when a current
+					// version exists; otherwise custom is the only choice.
+					m.bootstrapCustomActive = false
+					m.bootstrapCustomInput.Blur()
+					m.bootstrapBumpIdx = bumpPatch
+					m.err = ""
+					return m, nil
+				}
+			}
+		}
+		var cmd tea.Cmd
+		m.bootstrapCustomInput, cmd = m.bootstrapCustomInput.Update(msg)
+		return m, cmd
+	}
+
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.Type {
+	case tea.KeyUp:
+		if m.bootstrapBumpIdx > 0 {
+			m.bootstrapBumpIdx--
+		}
+	case tea.KeyDown:
+		if m.bootstrapBumpIdx < len(bumpChoices)-1 {
+			m.bootstrapBumpIdx++
+		}
+	case tea.KeyEnter:
+		if m.bootstrapBumpIdx == bumpCustom {
+			m.bootstrapCustomActive = true
+			m.bootstrapCustomInput.Focus()
+			if m.bootstrapCustomInput.Value() == "" && m.bootstrapCurrent != "" {
+				m.bootstrapCustomInput.SetValue(m.bootstrapCurrent)
+			}
+			return m, textinput.Blink
+		}
+		return m.commitBootstrapVersion(m.computeBumpedVersion(m.bootstrapBumpIdx))
+	}
+	return m, nil
+}
+
+func (m Model) computeBumpedVersion(idx int) string {
+	cur, err := release.ParseSemver(m.bootstrapCurrent)
+	if err != nil {
+		return ""
+	}
+	switch idx {
+	case bumpPatch:
+		return release.Semver{Major: cur.Major, Minor: cur.Minor, Patch: cur.Patch + 1}.String()
+	case bumpMinor:
+		return release.Semver{Major: cur.Major, Minor: cur.Minor + 1}.String()
+	case bumpMajor:
+		return release.Semver{Major: cur.Major + 1}.String()
+	}
+	return ""
+}
+
+func (m Model) commitBootstrapVersion(v string) (tea.Model, tea.Cmd) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if _, err := release.ParseSemver(v); err != nil {
+		m.err = fmt.Sprintf("invalid semver: %v", err)
+		return m, nil
+	}
+	m.bootstrapFirstVersion = v
+	m.bootstrapCustomInput.Blur()
+	m.err = ""
+	m.done = true
+	return m, tea.Quit
 }
 
 // View satisfies tea.Model.
@@ -686,6 +893,12 @@ func (m Model) View() string {
 		b.WriteString(helpStyle.Render("This is what will be written to .github/releaser.yaml.") + "\n\n")
 		b.WriteString(m.preview.View() + "\n")
 		b.WriteString("\n" + helpStyle.Render("enter confirm and write · [e] edit · esc abort"))
+	case stepBootstrapGeneratePrompt:
+		b.WriteString(m.viewBootstrapGeneratePrompt())
+	case stepBootstrapPRPrompt:
+		b.WriteString(m.viewBootstrapPRPrompt())
+	case stepBootstrapVersion:
+		b.WriteString(m.viewBootstrapVersion())
 	}
 
 	if m.err != "" {
@@ -726,6 +939,54 @@ func (m Model) viewTargets() string {
 		}
 		b.WriteString("\n" + helpStyle.Render("↑/↓ select · enter confirm · esc abort"))
 	}
+	return b.String()
+}
+
+func (m Model) viewBootstrapGeneratePrompt() string {
+	var b strings.Builder
+	b.WriteString(labelStyle.Render("Generate workflow files now?") + "\n")
+	b.WriteString(helpStyle.Render("Writes .github/workflows/releaser.yml so the next push triggers the pending-release loop.") + "\n\n")
+	b.WriteString(renderYesNo("Yes", m.bootstrapGenerateIdx == 0))
+	b.WriteString(renderYesNo("No", m.bootstrapGenerateIdx == 1))
+	b.WriteString("\n" + helpStyle.Render("↑/↓ select · enter confirm · esc abort"))
+	return b.String()
+}
+
+func (m Model) viewBootstrapPRPrompt() string {
+	var b strings.Builder
+	b.WriteString(labelStyle.Render("Open bootstrap PR now?") + "\n")
+	b.WriteString(helpStyle.Render("Commits the workflows + first version bump on a branch and opens the PR. Merging it ships the first release.") + "\n\n")
+	b.WriteString(renderYesNo("Yes", m.bootstrapPRIdx == 0))
+	b.WriteString(renderYesNo("No", m.bootstrapPRIdx == 1))
+	b.WriteString("\n" + helpStyle.Render("↑/↓ select · enter confirm · esc abort"))
+	return b.String()
+}
+
+func (m Model) viewBootstrapVersion() string {
+	var b strings.Builder
+	b.WriteString(labelStyle.Render("First release version") + "\n")
+	if m.bootstrapCurrent != "" {
+		b.WriteString(helpStyle.Render(fmt.Sprintf("Current value in version file: %s", m.bootstrapCurrent)) + "\n\n")
+	} else {
+		b.WriteString(helpStyle.Render("Couldn't read a parseable version from the version file — enter the first release version directly.") + "\n\n")
+	}
+	if m.bootstrapCustomActive {
+		b.WriteString(labelStyle.Render("Version: ") + m.bootstrapCustomInput.View() + "\n")
+		hint := "enter confirm · esc abort"
+		if m.bootstrapCurrent != "" {
+			hint = "enter confirm · tab back to suggestions · esc abort"
+		}
+		b.WriteString("\n" + helpStyle.Render(hint))
+		return b.String()
+	}
+	for i, label := range bumpChoices {
+		preview := ""
+		if i != bumpCustom {
+			preview = " → " + m.computeBumpedVersion(i)
+		}
+		b.WriteString(renderChoice(label+preview, i == m.bootstrapBumpIdx))
+	}
+	b.WriteString("\n" + helpStyle.Render("↑/↓ select · enter confirm · esc abort"))
 	return b.String()
 }
 

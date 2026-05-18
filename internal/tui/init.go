@@ -20,8 +20,21 @@ var ErrAborted = errors.New("init aborted by user")
 // with adapter SuggestDefaults but the caller is still expected to run
 // ValidateConfig and config.Save itself — that keeps the cli package as
 // the single place that touches disk.
+//
+// GenerateWorkflows, OpenBootstrapPR, and FirstVersion capture the
+// user's answers to the post-preview bootstrap steps. The caller acts
+// on them after Save:
+//   - GenerateWorkflows=true → run generate.Generate in-process.
+//   - OpenBootstrapPR=true → also run release.Bootstrap to commit the
+//     workflows + version bump on a branch and open the bootstrap PR.
+//
+// FirstVersion is a bare semver (no leading "v") and is only meaningful
+// when OpenBootstrapPR is true.
 type Result struct {
-	Config config.Config
+	Config            config.Config
+	GenerateWorkflows bool
+	OpenBootstrapPR   bool
+	FirstVersion      string
 }
 
 // RunInit launches the interactive init flow against in/out. registry
@@ -44,5 +57,10 @@ func RunInit(in io.Reader, out io.Writer, repoRoot string, registry *adapter.Reg
 	if !m.Done() {
 		return Result{}, ErrAborted
 	}
-	return Result{Config: m.Config()}, nil
+	return Result{
+		Config:            m.Config(),
+		GenerateWorkflows: m.GenerateWorkflows(),
+		OpenBootstrapPR:   m.OpenBootstrapPR(),
+		FirstVersion:      m.FirstVersion(),
+	}, nil
 }

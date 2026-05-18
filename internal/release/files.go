@@ -79,6 +79,43 @@ func rewriteOneVersionFile(repoRoot string, loc config.VersionLocation, newVersi
 	return atomicWriteVersionFile(absPath, b.Bytes(), info.Mode().Perm())
 }
 
+// ReadCurrentVersion runs loc.Regex against the file at loc.Path and
+// returns the contents of its single capture group. Returns ("", nil)
+// when the file is missing or the regex does not match — callers
+// (notably the init TUI's bootstrap step) treat both as "no version
+// suggestion available" and fall back to free-form input.
+//
+// A compile error or a regex with the wrong number of capture groups
+// is returned as an error, so users get the same diagnostic they'd
+// see from RewriteVersionFiles rather than a silent fallback.
+func ReadCurrentVersion(repoRoot string, loc config.VersionLocation) (string, error) {
+	pattern := loc.Regex
+	if !strings.HasPrefix(pattern, "(?") {
+		pattern = "(?m)" + pattern
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("compile regex: %w", err)
+	}
+	if re.NumSubexp() != 1 {
+		return "", fmt.Errorf("regex must contain exactly one capture group, got %d", re.NumSubexp())
+	}
+	absPath := filepath.Join(repoRoot, loc.Path)
+	// #nosec G304 -- absPath joins a caller-supplied repoRoot with a configured location path.
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read: %w", err)
+	}
+	m := re.FindSubmatch(data)
+	if m == nil {
+		return "", nil
+	}
+	return string(m[1]), nil
+}
+
 func atomicWriteVersionFile(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".releaser-*.tmp")

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -110,13 +112,26 @@ func TestModel_HappyPathGenericAdapter(t *testing.T) {
 			cfg.Workflows.File, cfg.Release.BranchName)
 	}
 
-	// Final confirm.
+	// Confirm preview -> moves into the bootstrap-generate prompt.
+	m = press(t, m, tea.KeyEnter)
+	if m.step != stepBootstrapGeneratePrompt {
+		t.Fatalf("after preview confirm: step = %v, want stepBootstrapGeneratePrompt", m.step)
+	}
+	// Decline the bootstrap-generate prompt (Down -> "No", Enter) — the
+	// flow should end with Done() and no further side effects requested.
+	m = press(t, m, tea.KeyDown)
 	m = press(t, m, tea.KeyEnter)
 	if !m.Done() {
-		t.Errorf("after preview confirm: Done() = false")
+		t.Errorf("after declining generate prompt: Done() = false")
 	}
 	if m.Aborted() {
-		t.Errorf("after preview confirm: Aborted() = true")
+		t.Errorf("after declining generate prompt: Aborted() = true")
+	}
+	if m.GenerateWorkflows() {
+		t.Errorf("GenerateWorkflows() = true, want false after declining")
+	}
+	if m.OpenBootstrapPR() {
+		t.Errorf("OpenBootstrapPR() = true, want false")
 	}
 }
 
@@ -338,5 +353,181 @@ func TestModel_AdvancedPromptDefaultsToNo(t *testing.T) {
 	m = press(t, m, tea.KeyEnter)
 	if m.step != stepAdvanced {
 		t.Fatalf("after Enter on Yes: step = %v, want stepAdvanced", m.step)
+	}
+}
+
+// walkToPreview drives the model through adapter → build → artifacts →
+// version-locations → skip advanced → preview, leaving it on the preview
+// step ready for the bootstrap branch of the flow. The Makefile in
+// repoRoot is created with VERSION := 0.0.0 so the bootstrap-version
+// step can read a parseable current value.
+func walkToPreview(t *testing.T, repoRoot string) Model {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repoRoot, "Makefile"), []byte("VERSION := 0.0.0\nall:\n"), 0o644); err != nil {
+		t.Fatalf("write Makefile: %v", err)
+	}
+	registry := adapters.DefaultRegistry()
+	m := NewModel(repoRoot, registry)
+	m = press(t, m, tea.KeyEnter) // generic
+	m = typeString(t, m, "make build")
+	m = press(t, m, tea.KeyCtrlS) // build cmd
+	m = typeString(t, m, "dist/*")
+	m = press(t, m, tea.KeyEnter) // artifacts
+	m = typeString(t, m, "Makefile")
+	m = press(t, m, tea.KeyTab)
+	m = typeString(t, m, `^VERSION := (.*)$`)
+	m = press(t, m, tea.KeyEnter) // version locations
+	m = press(t, m, tea.KeyEnter) // skip advanced (default "No")
+	if m.step != stepPreview {
+		t.Fatalf("walkToPreview: step = %v, want stepPreview", m.step)
+	}
+	return m
+}
+
+// Declining "generate workflows?" exits with Done() and clears the
+// bootstrap intent — the CLI must not run generate or open a PR.
+func TestModel_BootstrapDeclineGenerate(t *testing.T) {
+	m := walkToPreview(t, t.TempDir())
+	m = press(t, m, tea.KeyEnter) // preview confirm -> generate prompt
+	if m.step != stepBootstrapGeneratePrompt {
+		t.Fatalf("step = %v, want stepBootstrapGeneratePrompt", m.step)
+	}
+	// "Yes" is the default; press Down to land on "No", then Enter.
+	m = press(t, m, tea.KeyDown)
+	m = press(t, m, tea.KeyEnter)
+	if !m.Done() {
+		t.Fatalf("Done() = false after declining generate")
+	}
+	if m.GenerateWorkflows() {
+		t.Errorf("GenerateWorkflows() = true, want false")
+	}
+	if m.OpenBootstrapPR() {
+		t.Errorf("OpenBootstrapPR() = true, want false")
+	}
+}
+
+// Accepting "generate" but declining "open PR" exits with Done(),
+// GenerateWorkflows() true, OpenBootstrapPR() false, and no version
+// step shown.
+func TestModel_BootstrapGenerateOnly(t *testing.T) {
+	m := walkToPreview(t, t.TempDir())
+	m = press(t, m, tea.KeyEnter) // preview confirm
+	// generate prompt: default "Yes" — Enter.
+	m = press(t, m, tea.KeyEnter)
+	if m.step != stepBootstrapPRPrompt {
+		t.Fatalf("step = %v, want stepBootstrapPRPrompt", m.step)
+	}
+	// PR prompt: pick "No".
+	m = press(t, m, tea.KeyDown)
+	m = press(t, m, tea.KeyEnter)
+	if !m.Done() {
+		t.Fatalf("Done() = false")
+	}
+	if !m.GenerateWorkflows() {
+		t.Errorf("GenerateWorkflows() = false, want true")
+	}
+	if m.OpenBootstrapPR() {
+		t.Errorf("OpenBootstrapPR() = true, want false")
+	}
+	if m.FirstVersion() != "" {
+		t.Errorf("FirstVersion() = %q, want empty (PR declined)", m.FirstVersion())
+	}
+}
+
+// Full bootstrap path: accept generate, accept PR, pick the minor-bump
+// suggestion against a 0.0.0 current value. FirstVersion() should
+// surface 0.1.0.
+func TestModel_BootstrapFullFlowMinorBump(t *testing.T) {
+	repoRoot := t.TempDir()
+	m := walkToPreview(t, repoRoot)
+	m = press(t, m, tea.KeyEnter) // preview confirm
+	m = press(t, m, tea.KeyEnter) // generate Yes
+	m = press(t, m, tea.KeyEnter) // PR Yes -> bootstrap version
+	if m.step != stepBootstrapVersion {
+		t.Fatalf("step = %v, want stepBootstrapVersion", m.step)
+	}
+	if m.bootstrapCurrent != "0.0.0" {
+		t.Fatalf("bootstrapCurrent = %q, want 0.0.0", m.bootstrapCurrent)
+	}
+	if m.bootstrapBumpIdx != bumpMinor {
+		t.Fatalf("default bump idx = %d, want %d (bumpMinor)", m.bootstrapBumpIdx, bumpMinor)
+	}
+	m = press(t, m, tea.KeyEnter) // confirm minor
+	if !m.Done() {
+		t.Fatalf("Done() = false")
+	}
+	if got := m.FirstVersion(); got != "0.1.0" {
+		t.Errorf("FirstVersion() = %q, want 0.1.0", got)
+	}
+}
+
+// When the regex doesn't match anything in the file, the version step
+// falls back to free-form input.
+func TestModel_BootstrapVersionFallsBackToCustomWhenNoMatch(t *testing.T) {
+	repoRoot := t.TempDir()
+	// Write a Makefile without a VERSION line.
+	if err := os.WriteFile(filepath.Join(repoRoot, "Makefile"), []byte("all:\n"), 0o644); err != nil {
+		t.Fatalf("write Makefile: %v", err)
+	}
+	registry := adapters.DefaultRegistry()
+	m := NewModel(repoRoot, registry)
+	m = press(t, m, tea.KeyEnter)
+	m = typeString(t, m, "make build")
+	m = press(t, m, tea.KeyCtrlS)
+	m = typeString(t, m, "dist/*")
+	m = press(t, m, tea.KeyEnter)
+	m = typeString(t, m, "Makefile")
+	m = press(t, m, tea.KeyTab)
+	m = typeString(t, m, `^VERSION := (.*)$`)
+	m = press(t, m, tea.KeyEnter) // version locations
+	m = press(t, m, tea.KeyEnter) // skip advanced
+	m = press(t, m, tea.KeyEnter) // preview confirm
+	m = press(t, m, tea.KeyEnter) // generate Yes
+	m = press(t, m, tea.KeyEnter) // PR Yes -> bootstrap version
+
+	if m.bootstrapCurrent != "" {
+		t.Errorf("bootstrapCurrent = %q, want empty when regex doesn't match", m.bootstrapCurrent)
+	}
+	if !m.bootstrapCustomActive {
+		t.Errorf("bootstrapCustomActive = false, want true when no current version available")
+	}
+	// Type a version and confirm.
+	m = typeString(t, m, "0.5.0")
+	m = press(t, m, tea.KeyEnter)
+	if !m.Done() {
+		t.Fatalf("Done() = false")
+	}
+	if got := m.FirstVersion(); got != "0.5.0" {
+		t.Errorf("FirstVersion() = %q, want 0.5.0", got)
+	}
+}
+
+// Invalid semver entered in the custom field must surface an inline
+// error and keep the user on the version step.
+func TestModel_BootstrapVersionRejectsInvalidSemver(t *testing.T) {
+	repoRoot := t.TempDir()
+	m := walkToPreview(t, repoRoot)
+	m = press(t, m, tea.KeyEnter) // preview confirm
+	m = press(t, m, tea.KeyEnter) // generate Yes
+	m = press(t, m, tea.KeyEnter) // PR Yes -> bootstrap version
+
+	// Move down to "custom" choice and Enter.
+	for m.bootstrapBumpIdx < bumpCustom {
+		m = press(t, m, tea.KeyDown)
+	}
+	m = press(t, m, tea.KeyEnter)
+	if !m.bootstrapCustomActive {
+		t.Fatalf("custom not active after selecting it")
+	}
+	// On entry the field is pre-populated with the current version; clear
+	// it then type junk.
+	m.bootstrapCustomInput.SetValue("")
+	m = typeString(t, m, "not-a-semver")
+	m = press(t, m, tea.KeyEnter)
+	if m.Done() {
+		t.Fatalf("Done() = true despite invalid semver")
+	}
+	if !strings.Contains(m.err, "semver") {
+		t.Errorf("err = %q, want it to mention semver", m.err)
 	}
 }
