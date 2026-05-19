@@ -37,29 +37,22 @@ func (*Adapter) SuggestDefaults(_ string) (config.Suggestions, error) {
 }
 
 // SchemaInfo describes the generic adapter's schema rules for
-// `releaser config schema`.
+// `releaser config schema`. The generic adapter has no hard-required
+// fields: an empty build block selects "library mode" (no artifacts to
+// attach), and empty version.locations defers version reading to the
+// latest semver git tag + commit-derived bump.
 func (*Adapter) SchemaInfo() config.AdapterInfo {
 	return config.AdapterInfo{
 		Name: Name,
-		Required: []string{
-			"adapter.build.command",
-			"adapter.version.locations",
-		},
 	}
 }
 
-// ValidateConfig enforces the minimum information the generic adapter needs
-// to drive a release: a build command and at least one version location.
-// Any user-supplied adapter.setup_steps are also sanity-checked: each
-// entry must be a YAML sequence containing exactly one mapping (i.e.
-// one GitHub Actions step starting with `-`).
+// ValidateConfig sanity-checks any user-supplied adapter.setup_steps:
+// each entry must be a YAML sequence containing exactly one mapping
+// (i.e. one GitHub Actions step starting with `-`). build.command and
+// version.locations are both optional — leaving them empty selects
+// library mode (no asset upload / no version file rewrite).
 func (*Adapter) ValidateConfig(cfg config.Config) error {
-	if cfg.Adapter.Build.Command == "" {
-		return errors.New("generic adapter requires adapter.build.command")
-	}
-	if len(cfg.Adapter.Version.Locations) == 0 {
-		return errors.New("generic adapter requires at least one adapter.version.locations entry")
-	}
 	for i, step := range cfg.Adapter.SetupSteps {
 		if err := validateSetupStep(step); err != nil {
 			return fmt.Errorf("adapter.setup_steps[%d]: %w", i, err)
@@ -121,9 +114,13 @@ func (*Adapter) BuildEnv(_ config.Config) map[string]string { return nil }
 // The returned value is the trimmed contents of the first capture group;
 // surrounding whitespace is stripped but the value is otherwise returned
 // verbatim (a leading "v" is preserved if the user's regex captures it).
+//
+// When no version.locations are configured (library mode), returns
+// adapter.ErrFallbackToConfig so the engine derives the version from
+// the latest semver git tag plus the bump implied by commits since.
 func (*Adapter) ReadVersion(repoRoot string, cfg config.Config) (string, error) {
 	if len(cfg.Adapter.Version.Locations) == 0 {
-		return "", errors.New("no adapter.version.locations configured")
+		return "", adapter.ErrFallbackToConfig
 	}
 	loc := cfg.Adapter.Version.Locations[0]
 	pattern := loc.Regex

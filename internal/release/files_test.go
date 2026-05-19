@@ -158,9 +158,20 @@ func TestRewriteVersionFiles_RejectsZeroOrMultipleCaptureGroups(t *testing.T) {
 	}
 }
 
-func TestRewriteVersionFiles_NoLocationsConfigured(t *testing.T) {
-	if err := release.RewriteVersionFiles(t.TempDir(), config.Config{}, "0.2.0"); err == nil {
-		t.Fatal("expected error for empty version.locations")
+func TestRewriteVersionFiles_NoLocationsIsNoop(t *testing.T) {
+	// Empty version.locations is library mode — RewriteVersionFiles
+	// touches nothing and returns nil. The prepare flow relies on this
+	// to keep its happy path uniform across artifact and library configs.
+	repo := t.TempDir()
+	if err := release.RewriteVersionFiles(repo, config.Config{}, "0.2.0"); err != nil {
+		t.Fatalf("RewriteVersionFiles: got %v, want nil", err)
+	}
+	entries, err := os.ReadDir(repo)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("repo should be untouched, found %d entries", len(entries))
 	}
 }
 

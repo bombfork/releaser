@@ -126,10 +126,18 @@ func TestRunBuild_RunsInRepoRoot(t *testing.T) {
 	}
 }
 
-func TestRunBuild_NoCommandConfigured(t *testing.T) {
+func TestRunBuild_NoCommandIsLibraryMode(t *testing.T) {
+	// Empty build.command selects library mode: no exec, no error,
+	// no artifacts. Artifacts being configured anyway is irrelevant —
+	// the upstream library-mode contract is "if there's no command,
+	// there's nothing to build".
 	cfg := config.Config{Adapter: config.Adapter{Build: config.Build{Artifacts: []string{"dist/*"}}}}
-	if _, err := release.RunBuild(t.TempDir(), cfg, nil, io.Discard, io.Discard); err == nil {
-		t.Fatal("expected error for missing build.command")
+	artifacts, err := release.RunBuild(t.TempDir(), cfg, nil, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("RunBuild: %v", err)
+	}
+	if artifacts != nil {
+		t.Errorf("got artifacts %v, want nil", artifacts)
 	}
 }
 

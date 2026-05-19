@@ -153,12 +153,15 @@ func TestInit_FromPresetWithGitHubAppAuth(t *testing.T) {
 }
 
 // init must reject a preset that does not satisfy the chosen adapter's
-// validation rules, and must not leave a partial file behind.
+// validation rules, and must not leave a partial file behind. Uses the
+// go adapter here because the generic adapter intentionally accepts an
+// empty config as library mode.
 func TestInit_RejectsPresetFailingAdapterValidation(t *testing.T) {
 	repo := t.TempDir()
 	preset := filepath.Join(repo, "preset.yaml")
-	// generic adapter requires build.command and version.locations.
-	writeFile(t, preset, "adapter:\n  type: generic\n")
+	// go adapter requires build.command, build.artifacts, targets, and
+	// version.locations — the empty preset below trips every check.
+	writeFile(t, preset, "adapter:\n  type: go\n")
 
 	r := runCLI(t, "init", "--from", preset, "--repo-root", repo)
 	if r.err == nil {

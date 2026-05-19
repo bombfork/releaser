@@ -29,11 +29,13 @@ import (
 // Shell features such as &&, pipelines, redirection, and parameter
 // expansion are available since the command is interpreted by /bin/sh.
 //
-// An empty artifact list is treated as an error: producing zero files to
-// attach is almost always a misconfiguration.
+// An empty build.command selects library mode: RunBuild returns
+// (nil, nil) without executing anything. The caller is expected to
+// skip the asset-upload step accordingly. An empty artifact list when
+// a command IS configured remains an error — that's a misconfiguration.
 func RunBuild(repoRoot string, cfg config.Config, extraEnv map[string]string, stdout, stderr io.Writer) ([]string, error) {
 	if cfg.Adapter.Build.Command == "" {
-		return nil, errors.New("no build.command configured")
+		return nil, nil
 	}
 	if len(cfg.Adapter.Build.Artifacts) == 0 {
 		return nil, errors.New("no build.artifacts configured")

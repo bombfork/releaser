@@ -611,3 +611,101 @@ func TestPublish_CurrentBehindLatestTagIsNoop(t *testing.T) {
 		t.Errorf("UploadAsset count = %d, want 0", got)
 	}
 }
+
+// initLibraryPublishFixture sets up the library-mode equivalent of
+// initPublishFixture: previous tag v0.1.0, a feat commit, then an
+// empty "chore(release): prepare v0.2.0" commit on top. There is no
+// Makefile and no version file in the tree — the prepare commit is
+// empty, as it would be in production library mode.
+func initLibraryPublishFixture(t *testing.T) (upstream, local string) {
+	t.Helper()
+	upstream = t.TempDir()
+	local = t.TempDir()
+	runIn := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runIn(upstream, "init", "-q", "--bare", "-b", "main")
+	runIn(local, "init", "-q", "-b", "main")
+	runIn(local, "config", "user.email", "test@example.com")
+	runIn(local, "config", "user.name", "test")
+	runIn(local, "config", "commit.gpgsign", "false")
+	runIn(local, "remote", "add", "origin", upstream)
+
+	if err := os.WriteFile(filepath.Join(local, "go.mod"), []byte("module example.com/lib\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	runIn(local, "add", "go.mod")
+	runIn(local, "commit", "-q", "-m", "chore: initial")
+	runIn(local, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
+
+	runIn(local, "commit", "--allow-empty", "-q", "-m", "feat: add public API")
+	runIn(local, "commit", "--allow-empty", "-q", "-m", "chore(release): prepare v0.2.0")
+
+	runIn(local, "push", "-q", "origin", "main")
+	runIn(local, "push", "-q", "origin", "v0.1.0")
+	return upstream, local
+}
+
+func libraryPublishCfg() config.Config {
+	// No build block, no version.locations: this is library mode.
+	// Publish should derive the version from BuildPlan (latest tag +
+	// commit-implied bump), tag HEAD, create the release, and skip the
+	// build + asset-upload steps entirely.
+	return config.Config{Adapter: config.Adapter{Type: "generic"}}
+}
+
+func TestPublish_LibraryMode_CreatesReleaseWithoutAssets(t *testing.T) {
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+	upstream, repo := initLibraryPublishFixture(t)
+
+	httpClient, c := buildPublishMock(t, publishMockBehavior{
+		getReleaseResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusNotFound, "release not found")
+		},
+		listAssetsResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusInternalServerError, "unexpected ListReleaseAssets in library mode")
+		},
+		uploadAssetResponse: func(w http.ResponseWriter) {
+			mock.WriteError(w, http.StatusInternalServerError, "unexpected UploadAsset in library mode")
+		},
+	})
+
+	var stdout bytes.Buffer
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_test"}
+	if err := release.Publish(context.Background(), repo, release.PublishInputs{
+		Config:        libraryPublishCfg(),
+		Adapter:       generic.New(),
+		GitHubClient:  ghClient,
+		TokenProvider: tp,
+		Stdout:        &stdout,
+		Stderr:        io.Discard,
+		RemoteURL:     upstream,
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	if got := c.createRel.Load(); got != 1 {
+		t.Errorf("CreateRelease count = %d, want 1", got)
+	}
+	if got := c.uploadAsset.Load(); got != 0 {
+		t.Errorf("UploadAsset count = %d, want 0 (library mode)", got)
+	}
+	if got := c.listAssets.Load(); got != 0 {
+		t.Errorf("ListReleaseAssets count = %d, want 0 (no upload step)", got)
+	}
+	for _, want := range []string{
+		"Current version: 0.2.0",
+		"Latest tag: v0.1.0",
+		"Created release v0.2.0",
+		"library mode",
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q; full output:\n%s", want, stdout.String())
+		}
+	}
+}

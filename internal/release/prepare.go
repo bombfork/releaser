@@ -219,7 +219,11 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 	if err := RewriteVersionFiles(repoRoot, in.Config, plan.NextVersion.String()); err != nil {
 		return fmt.Errorf("rewrite version files: %w", err)
 	}
-	logf(out, "Rewrote %d version file(s) to %s\n", len(in.Config.Adapter.Version.Locations), plan.NextVersion)
+	if n := len(in.Config.Adapter.Version.Locations); n > 0 {
+		logf(out, "Rewrote %d version file(s) to %s\n", n, plan.NextVersion)
+	} else {
+		logf(out, "No version files configured; will commit an empty bump for %s (library mode)\n", plan.NextVersion)
+	}
 	if _, err := CommitWithIdentity(repoRoot, identity, commitMsg); err != nil {
 		return fmt.Errorf("commit version bump: %w", err)
 	}

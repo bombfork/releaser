@@ -24,9 +24,12 @@ import (
 // Writes are atomic per file (temp file + rename, preserving file mode).
 // A failure partway through is not rolled back across files: callers
 // should run this on a fresh worktree so the branch can be discarded.
+//
+// Empty version.locations is a no-op (library mode): there's nothing to
+// rewrite, so the function returns nil without touching the filesystem.
 func RewriteVersionFiles(repoRoot string, cfg config.Config, newVersion string) error {
 	if len(cfg.Adapter.Version.Locations) == 0 {
-		return errors.New("no version.locations configured")
+		return nil
 	}
 	for _, loc := range cfg.Adapter.Version.Locations {
 		if err := rewriteOneVersionFile(repoRoot, loc, newVersion); err != nil {

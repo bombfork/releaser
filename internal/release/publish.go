@@ -134,6 +134,18 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) (retErr err
 	}
 
 	currentStr, err := in.Adapter.ReadVersion(repoRoot, in.Config)
+	if errors.Is(err, adapter.ErrFallbackToConfig) {
+		// Library mode: no in-tree version file. Derive the version
+		// the same way prepare does — latest semver tag + commit-implied
+		// bump — so prepare and publish agree without coupling via a
+		// parsed commit subject.
+		plan, planErr := BuildPlan(repoRoot, in.Config, in.Adapter)
+		if planErr != nil {
+			return fmt.Errorf("derive current version from git: %w", planErr)
+		}
+		currentStr = plan.NextVersion.String()
+		err = nil
+	}
 	if err != nil {
 		return fmt.Errorf("read current version: %w", err)
 	}
@@ -209,6 +221,11 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) (retErr err
 	// resolve the tag without needing a workaround in the build command.
 	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
 		return fmt.Errorf("fetch tags after ensuring release: %w", err)
+	}
+
+	if in.Config.Adapter.Build.Command == "" {
+		logln(out, "No build command configured; skipping build and asset upload (library mode)")
+		return nil
 	}
 
 	buildEnv := BuildEnvForVersion(current)
@@ -303,8 +320,12 @@ func describePublishPlan(ctx context.Context, out io.Writer, in PublishInputs, r
 		}
 	}
 	fmt.Fprintln(&buf)
-	fmt.Fprintf(&buf, "Would run build: %s\n", in.Config.Adapter.Build.Command)
-	fmt.Fprintf(&buf, "Would attach artifacts matching: %s (skipping any already attached)\n", strings.Join(in.Config.Adapter.Build.Artifacts, ", "))
+	if in.Config.Adapter.Build.Command == "" {
+		fmt.Fprintln(&buf, "No build command configured; would skip build and asset upload (library mode).")
+	} else {
+		fmt.Fprintf(&buf, "Would run build: %s\n", in.Config.Adapter.Build.Command)
+		fmt.Fprintf(&buf, "Would attach artifacts matching: %s (skipping any already attached)\n", strings.Join(in.Config.Adapter.Build.Artifacts, ", "))
+	}
 	if _, err := out.Write(buf.Bytes()); err != nil {
 		return fmt.Errorf("write dry-run output: %w", err)
 	}

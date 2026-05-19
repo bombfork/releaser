@@ -105,17 +105,17 @@ func TestConfig_AddRollsBackOnAdapterValidation(t *testing.T) {
 	repo := t.TempDir()
 	writeFile(t, filepath.Join(repo, config.DefaultFilePath), validConfig)
 
-	// generic adapter requires version.locations be non-empty; remove the
-	// only entry to fail validation. The rm must be rejected and the
-	// file left intact.
-	r := runCLI(t, "config", "rm", "adapter.version.locations", "0", "--repo-root", repo)
+	// generic adapter rejects malformed setup_steps entries (each must
+	// be a single-step YAML sequence). Add a raw scalar — guaranteed
+	// to fail validation — and confirm the mutation is rolled back.
+	r := runCLI(t, "config", "add", "adapter.setup_steps", "not a yaml step", "--repo-root", repo)
 	if r.err == nil {
-		t.Fatal("expected adapter validation to reject an empty version.locations")
+		t.Fatal("expected adapter validation to reject a malformed setup_steps entry")
 	}
 
-	// The on-disk file must still contain the original location.
+	// The on-disk file must be untouched: no setup_steps key added.
 	raw := readFile(t, filepath.Join(repo, config.DefaultFilePath))
-	if !strings.Contains(raw, "Makefile") {
+	if strings.Contains(raw, "setup_steps") {
 		t.Errorf("config was modified despite validation failure:\n%s", raw)
 	}
 }

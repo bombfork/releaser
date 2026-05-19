@@ -63,3 +63,22 @@ const validConfig = `adapter:
       - path: Makefile
         regex: '^VERSION := (.*)$'
 `
+
+// validGoConfig is a configuration that satisfies the (stricter) go
+// adapter's ValidateConfig requirements. Used in tests that need to
+// exercise an adapter which rejects empty build.command (generic
+// accepts that as library mode).
+const validGoConfig = `adapter:
+  type: go
+  build:
+    command: go build -o dist/app ./cmd/app
+    artifacts:
+      - dist/*
+    targets:
+      - os: linux
+        arch: amd64
+  version:
+    locations:
+      - path: main.go
+        regex: 'const version = "(.+)"'
+`

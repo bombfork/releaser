@@ -55,12 +55,13 @@ func TestConfig_GetUnknownKeyFails(t *testing.T) {
 }
 
 // `config set` must reject values that would put the configuration in a
-// state the adapter rejects (e.g. emptying build.command for the generic
-// adapter). The on-disk file must not be left in a broken state.
+// state the adapter rejects. Uses the `go` adapter here because the
+// generic adapter intentionally treats an empty build.command as
+// library mode and does not reject it.
 func TestConfig_SetRejectsInvalidValue(t *testing.T) {
 	repo := t.TempDir()
 	cfgPath := filepath.Join(repo, config.DefaultFilePath)
-	writeFile(t, cfgPath, validConfig)
+	writeFile(t, cfgPath, validGoConfig)
 
 	r := runCLI(t, "config", "set", "adapter.build.command", "", "--repo-root", repo)
 	if r.err == nil {
@@ -70,7 +71,7 @@ func TestConfig_SetRejectsInvalidValue(t *testing.T) {
 	// File must still be readable and contain the original value.
 	if r := runCLI(t, "config", "get", "adapter.build.command", "--repo-root", repo); r.err != nil {
 		t.Fatalf("config get after failed set: %v", r.err)
-	} else if got := strings.TrimSpace(r.stdout); got != "make build" {
+	} else if got := strings.TrimSpace(r.stdout); got != "go build -o dist/app ./cmd/app" {
 		t.Errorf("config was corrupted: build.command = %q", got)
 	}
 }

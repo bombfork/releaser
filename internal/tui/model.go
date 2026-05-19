@@ -443,12 +443,18 @@ func (m Model) updateArtifacts(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) advanceFromBuildCommand(out Model) Model {
-	if strings.TrimSpace(out.buildCmd.Value()) == "" {
-		out.err = "build command is required"
-		return out
-	}
 	out.err = ""
 	out.buildCmd.Blur()
+	// Empty build command selects library mode: no artifacts, no
+	// targets, and (assuming version.locations is also empty later)
+	// no version-file rewrite. Jump straight past the build-related
+	// steps so the prompt sequence stays coherent for library projects.
+	if strings.TrimSpace(out.buildCmd.Value()) == "" {
+		out.step = stepVersionLocations
+		out.verPath.Focus()
+		out.verFocus = 0
+		return out
+	}
 	out.step = stepArtifacts
 	out.artifacts.Focus()
 	return out
@@ -1126,7 +1132,7 @@ func (m Model) View() string {
 		b.WriteString("\n" + helpStyle.Render("↑/↓ select · enter confirm · esc abort"))
 	case stepBuildCommand:
 		b.WriteString(labelStyle.Render("Build command") + "\n")
-		b.WriteString(helpStyle.Render("Shell script run at the repo root to produce release artifacts. Multi-line is fine.") + "\n\n")
+		b.WriteString(helpStyle.Render("Shell script run at the repo root to produce release artifacts. Multi-line is fine. Leave blank for library mode (no artifacts uploaded).") + "\n\n")
 		b.WriteString(m.buildCmd.View() + "\n")
 		b.WriteString("\n" + helpStyle.Render("ctrl+s save and continue · enter insert newline · esc abort"))
 	case stepArtifacts:
@@ -1138,7 +1144,7 @@ func (m Model) View() string {
 		b.WriteString(m.viewTargets())
 	case stepVersionLocations:
 		b.WriteString(labelStyle.Render("Version location") + "\n")
-		b.WriteString(helpStyle.Render("File path and a regex with exactly one capture group around the version.") + "\n\n")
+		b.WriteString(helpStyle.Render("File path and a regex with exactly one capture group around the version. Leave both blank to read the version from the latest git tag.") + "\n\n")
 		b.WriteString(labelStyle.Render("Path:  ") + m.verPath.View() + "\n")
 		b.WriteString(labelStyle.Render("Regex: ") + m.verRegex.View() + "\n")
 		b.WriteString("\n" + helpStyle.Render("tab switch field · enter continue (on regex) · esc abort"))
@@ -1400,8 +1406,13 @@ func validateRegex(s string) error {
 }
 
 func validateVersionInputs(path, regex string) error {
+	// Both fields empty selects library mode: the version is read from
+	// the latest semver git tag at release time, no in-tree file needed.
+	if strings.TrimSpace(path) == "" && strings.TrimSpace(regex) == "" {
+		return nil
+	}
 	if strings.TrimSpace(path) == "" {
-		return errors.New("version path is required")
+		return errors.New("version path is required (or clear the regex to skip and use git tags)")
 	}
 	return validateRegex(regex)
 }

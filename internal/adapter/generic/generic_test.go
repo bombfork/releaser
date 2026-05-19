@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/bombfork/releaser/internal/adapter"
 	"github.com/bombfork/releaser/internal/adapter/generic"
 	"github.com/bombfork/releaser/internal/config"
 )
@@ -89,10 +90,10 @@ func TestReadVersion_UsesFirstLocationOnly(t *testing.T) {
 	}
 }
 
-func TestReadVersion_NoLocationsConfigured(t *testing.T) {
+func TestReadVersion_NoLocationsFallsBackToConfig(t *testing.T) {
 	_, err := generic.New().ReadVersion(t.TempDir(), config.Config{})
-	if err == nil {
-		t.Fatal("expected error for empty version.locations")
+	if !errors.Is(err, adapter.ErrFallbackToConfig) {
+		t.Fatalf("got %v, want adapter.ErrFallbackToConfig", err)
 	}
 }
 
@@ -138,24 +139,21 @@ func TestReadVersion_RejectsZeroOrMultipleCaptureGroups(t *testing.T) {
 	}
 }
 
-func TestSchemaInfo_AgreesWithValidateConfig(t *testing.T) {
+func TestSchemaInfo_NoHardRequirements(t *testing.T) {
+	// The generic adapter has no hard-required fields: an empty build
+	// block selects library mode and an empty version.locations defers
+	// to git-tag-derived versioning. ValidateConfig only enforces the
+	// format of setup_steps, which is a per-entry check rather than a
+	// required-field check, so SchemaInfo.Required stays empty.
 	info := generic.New().SchemaInfo()
 	if info.Name != "generic" {
 		t.Errorf("Name = %q, want %q", info.Name, "generic")
 	}
-	wantRequired := map[string]bool{
-		"adapter.build.command":     false,
-		"adapter.version.locations": false,
+	if len(info.Required) != 0 {
+		t.Errorf("SchemaInfo.Required = %v, want empty", info.Required)
 	}
-	for _, p := range info.Required {
-		if _, ok := wantRequired[p]; ok {
-			wantRequired[p] = true
-		}
-	}
-	for p, seen := range wantRequired {
-		if !seen {
-			t.Errorf("SchemaInfo.Required missing %q (ValidateConfig enforces it)", p)
-		}
+	if err := generic.New().ValidateConfig(config.Config{}); err != nil {
+		t.Errorf("ValidateConfig on empty config: got %v, want nil (library mode)", err)
 	}
 }
 
@@ -195,6 +193,41 @@ func TestWorkflowSnippets_SurfacesConfiguredSetupSteps(t *testing.T) {
 		if s.SetupSteps[i] != want {
 			t.Errorf("SetupSteps[%d] = %q, want %q", i, s.SetupSteps[i], want)
 		}
+	}
+}
+
+func TestValidateConfig_AcceptsLibraryMode(t *testing.T) {
+	// Library mode: no build, no version file. ValidateConfig must
+	// accept both omissions — the engine derives the version from git
+	// tags and skips the build/upload steps at release time.
+	cases := []struct {
+		name string
+		cfg  config.Config
+	}{
+		{"both empty", config.Config{Adapter: config.Adapter{Type: "generic"}}},
+		{
+			"build only",
+			config.Config{Adapter: config.Adapter{
+				Type:  "generic",
+				Build: config.Build{Command: "make build", Artifacts: []string{"dist/*"}},
+			}},
+		},
+		{
+			"version only",
+			config.Config{Adapter: config.Adapter{
+				Type: "generic",
+				Version: config.Version{Locations: []config.VersionLocation{
+					{Path: "VERSION", Regex: `^(.+)$`},
+				}},
+			}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := generic.New().ValidateConfig(tc.cfg); err != nil {
+				t.Errorf("ValidateConfig: got %v, want nil", err)
+			}
+		})
 	}
 }
 
