@@ -74,6 +74,25 @@ type ExistingBootstrap struct {
 	PRURL      string
 }
 
+// MissingScopeError is returned by Bootstrap when a preflight probe
+// reveals the local token is OAuth-backed but lacks a required scope.
+// The most common case is the `workflow` scope, required to push
+// changes under .github/workflows/* — the bootstrap commit always
+// includes the generated workflow file, so the push would fail with a
+// cryptic 403 mid-flow if not caught first.
+//
+// Callers (the CLI in particular) should branch on this error to
+// render guidance rather than letting the raw message surface to the
+// user.
+type MissingScopeError struct {
+	Required string
+	Have     []string
+}
+
+func (e *MissingScopeError) Error() string {
+	return fmt.Sprintf("token is missing required OAuth scope %q (have: %v)", e.Required, e.Have)
+}
+
 // BootstrapExistsError is returned by Bootstrap when Replace=false and
 // either the bootstrap branch or PR already exists. errors.As unwraps
 // to this type for callers to inspect Existing for user prompts.
@@ -139,6 +158,20 @@ func Bootstrap(ctx context.Context, repoRoot string, in BootstrapInputs) error {
 	title := fmt.Sprintf("chore(release): v%s", in.FirstVersion)
 	body := fmt.Sprintf("Bootstrap release. Merging this PR will tag, build, and publish v%s.", in.FirstVersion)
 	commitMsg := fmt.Sprintf("chore(release): prepare v%s", in.FirstVersion)
+
+	// Pre-flight: if the local token is OAuth-backed and lacks the
+	// `workflow` scope, the push would fail server-side because the
+	// bootstrap commit includes the generated workflow file. Catch it
+	// here with a structured error so the CLI can render fix-it
+	// guidance instead of letting a cryptic 403 surface mid-flow.
+	scopes, scopeErr := in.GitHubClient.OAuthScopes(ctx)
+	if scopeErr != nil {
+		// Probe failed — proceed and let any real auth issues surface
+		// at fetch/push time. Don't turn a probe outage into a fatal.
+		logf(out, "Warning: could not probe token scopes (continuing): %v\n", scopeErr)
+	} else if len(scopes) > 0 && !github.HasOAuthScope(scopes, "workflow") {
+		return &MissingScopeError{Required: "workflow", Have: scopes}
+	}
 
 	// Pre-flight: if Replace=false, check for an existing PR up-front and
 	// bail with the sentinel so the CLI can confirm with the user before

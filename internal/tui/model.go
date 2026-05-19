@@ -1221,6 +1221,9 @@ func (m Model) viewBootstrapPRPrompt() string {
 	var b strings.Builder
 	b.WriteString(labelStyle.Render("Open bootstrap PR now?") + "\n")
 	b.WriteString(helpStyle.Render("Commits the workflows + first version bump on a branch and opens the PR. Merging it ships the first release.") + "\n\n")
+	b.WriteString(helpStyle.Render("Requires a local GitHub token authorized to push .github/workflows/* files.") + "\n")
+	b.WriteString(helpStyle.Render("If you authenticate via the gh CLI, ensure the `workflow` OAuth scope is granted:") + "\n")
+	b.WriteString(helpStyle.Render("  gh auth refresh -s workflow && export GH_TOKEN=$(gh auth token)") + "\n\n")
 	b.WriteString(renderYesNo("Yes", m.bootstrapPRIdx == 0))
 	b.WriteString(renderYesNo("No", m.bootstrapPRIdx == 1))
 	b.WriteString("\n" + helpStyle.Render("↑/↓ select · enter confirm · esc abort"))

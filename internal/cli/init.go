@@ -145,7 +145,49 @@ func runInitInteractive(ctx context.Context, repoRoot string, stderr io.Writer, 
 		in.Replace = true
 		err = release.Bootstrap(ctx, repoRoot, in)
 	}
+	var scopeErr *release.MissingScopeError
+	if errors.As(err, &scopeErr) {
+		printScopeGuidance(stdout, scopeErr, res.FirstVersion, res.Config.Release.WithDefaults().BranchName)
+		return nil
+	}
 	return err
+}
+
+// printScopeGuidance renders the recovery instructions when Bootstrap
+// detects the local token is OAuth-backed but missing a required scope
+// (typically `workflow`). Config and workflow files are already on
+// disk by the time Bootstrap is called, so we tell the user how to
+// finish the job — either by refreshing their token or by completing
+// the commit + push by hand.
+func printScopeGuidance(out io.Writer, err *release.MissingScopeError, firstVersion, branchName string) {
+	_, _ = fmt.Fprintf(out, "\nBootstrap PR skipped: your local GitHub token lacks the %q OAuth scope,\n", err.Required)
+	_, _ = fmt.Fprintf(out, "which is required to push changes under .github/workflows/*.\n")
+	_, _ = fmt.Fprintf(out, "Scopes on the current token: %v\n\n", err.Have)
+	_, _ = fmt.Fprintln(out, "Configuration and workflow files were saved at:")
+	_, _ = fmt.Fprintln(out, "  .github/releaser.yaml")
+	_, _ = fmt.Fprintln(out, "  .github/workflows/releaser.yml")
+	_, _ = fmt.Fprintln(out, "")
+	_, _ = fmt.Fprintln(out, "Refresh your token and re-run, or finish the bootstrap by hand.")
+	_, _ = fmt.Fprintln(out, "")
+	_, _ = fmt.Fprintln(out, "Refresh via gh CLI (most common):")
+	_, _ = fmt.Fprintln(out, "  gh auth refresh -s workflow")
+	_, _ = fmt.Fprintln(out, "  export GH_TOKEN=$(gh auth token)")
+	_, _ = fmt.Fprintln(out, "")
+	_, _ = fmt.Fprintln(out, "Or use a personal access token with the workflow scope:")
+	_, _ = fmt.Fprintln(out, "  export GH_TOKEN=<your-pat>")
+	_, _ = fmt.Fprintln(out, "")
+	_, _ = fmt.Fprintln(out, "Or set up GitHub App credentials locally (mirrors github_app mode):")
+	_, _ = fmt.Fprintln(out, "  export GH_TKN_APP_ID=<app-id>")
+	_, _ = fmt.Fprintln(out, "  export GH_TKN_APP_INST_ID=<installation-id>")
+	_, _ = fmt.Fprintln(out, "  export GH_TKN_APP_PRIVATE_KEY=\"$(cat path/to/key.pem)\"")
+	_, _ = fmt.Fprintln(out, "")
+	_, _ = fmt.Fprintln(out, "Then either re-run `releaser init` after removing the generated files,")
+	_, _ = fmt.Fprintln(out, "or commit and push the bootstrap by hand:")
+	_, _ = fmt.Fprintf(out, "  git checkout -b %s\n", branchName)
+	_, _ = fmt.Fprintln(out, "  git add .github/")
+	_, _ = fmt.Fprintf(out, "  git commit -m 'chore(release): prepare v%s'\n", firstVersion)
+	_, _ = fmt.Fprintf(out, "  git push -u origin %s\n", branchName)
+	_, _ = fmt.Fprintln(out, "")
 }
 
 // confirmReplace prints details of an existing bootstrap PR and asks

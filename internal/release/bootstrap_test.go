@@ -73,11 +73,20 @@ type bootstrapCounters struct {
 
 // buildBootstrapMock returns a client where the PR-list endpoint always
 // returns an empty list (no existing PR) — the happy-path scenario for
-// the first-time bootstrap.
+// the first-time bootstrap. The rate-limit handler responds without an
+// X-OAuth-Scopes header so the scope preflight in Bootstrap treats the
+// token as non-OAuth ("unknown, trust it") and proceeds.
 func buildBootstrapMock(t *testing.T) (*http.Client, *bootstrapCounters) {
 	t.Helper()
 	var c bootstrapCounters
 	mockedClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatchHandler(
+			mock.GetRateLimit,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				// No X-OAuth-Scopes header — preflight sees "unknown".
+				_, _ = w.Write([]byte(`{"rate":{"limit":5000,"remaining":4999}}`))
+			}),
+		),
 		mock.WithRequestMatchHandler(
 			mock.GetReposByOwnerByRepo,
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -194,6 +203,70 @@ func TestBootstrap_HappyPathCreatesBranchWorkflowsCommitAndPR(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("stdout missing %q; full output:\n%s", want, stdout.String())
 		}
+	}
+}
+
+// When the scope probe reports an OAuth token that lacks the workflow
+// scope, Bootstrap returns *MissingScopeError before doing anything
+// destructive (no fetch, no commit, no push).
+func TestBootstrap_FailsFastWhenTokenLacksWorkflowScope(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+
+	upstream, local := initBootstrapFixture(t)
+
+	cfg := config.Config{
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
+			Version: config.Version{Locations: []config.VersionLocation{
+				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
+			}},
+		},
+	}
+
+	httpClient := mock.NewMockedHTTPClient(
+		mock.WithRequestMatchHandler(
+			mock.GetRateLimit,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-OAuth-Scopes", "repo, read:org") // no `workflow`
+				_, _ = w.Write([]byte(`{"rate":{"limit":5000,"remaining":4999}}`))
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Repository{DefaultBranch: gh.Ptr("main")})
+			}),
+		),
+	)
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_testtoken"}
+
+	err := release.Bootstrap(context.Background(), local, release.BootstrapInputs{
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		FirstVersion: "0.1.0", ActionRef: "main", ActionVersion: "main",
+		RemoteURL: upstream,
+	})
+	var scopeErr *release.MissingScopeError
+	if !errors.As(err, &scopeErr) {
+		t.Fatalf("err = %v, want *MissingScopeError", err)
+	}
+	if scopeErr.Required != "workflow" {
+		t.Errorf("Required = %q, want workflow", scopeErr.Required)
+	}
+	if len(scopeErr.Have) != 2 || scopeErr.Have[0] != "repo" {
+		t.Errorf("Have = %v, want [repo read:org]", scopeErr.Have)
+	}
+
+	// No remote-side effects: the bootstrap branch must not exist on
+	// the upstream because Bootstrap returned before fetch/push.
+	out, lserr := exec.Command("git", "-C", upstream, "branch", "--list", "releaser/pending-release").CombinedOutput()
+	if lserr != nil {
+		t.Fatalf("git branch --list: %v\n%s", lserr, out)
+	}
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("upstream has releaser/pending-release branch despite preflight failure: %q", out)
 	}
 }
 
