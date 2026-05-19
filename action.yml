@@ -159,4 +159,15 @@ runs:
         RELEASER_ARGS: ${{ inputs.command }}
       run: |
         set -euo pipefail
+        # Drop empty auth env vars before invoking the binary. GitHub Actions
+        # materializes every `env:` mapping even when the source input is unset,
+        # so all four GH_TKN_* vars are always present here. gh-token-go uses
+        # os.LookupEnv (which sees "" as set) and prefers the App branch when
+        # any of GH_TKN_APP_* are set — an empty value would then be parsed as
+        # an int and fail. Unsetting empties forces the intended branch.
+        for var in GH_TKN_APP_ID GH_TKN_APP_INST_ID GH_TKN_APP_PRIVATE_KEY GH_TKN; do
+          if [[ -z "${!var:-}" ]]; then
+            unset "${var}"
+          fi
+        done
         eval "${RELEASER_BIN} ${RELEASER_ARGS}"
