@@ -3,13 +3,16 @@ package release_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -64,26 +67,36 @@ func initBootstrapFixture(t *testing.T) (upstream, local string) {
 	return upstream, local
 }
 
+// bootstrapCounters tracks how many times each endpoint is hit and
+// captures the Git Data API request bodies so tests can assert on the
+// blob set, tree entries, and commit identity Bootstrap produces.
 type bootstrapCounters struct {
 	getRepo  atomic.Int32
 	prList   atomic.Int32
 	prCreate atomic.Int32
 	prUpdate atomic.Int32
+
+	mu          sync.Mutex
+	blobs       []gh.Blob
+	treeEntries []gh.TreeEntry
+	commit      commitBody
 }
 
 // buildBootstrapMock returns a client where the PR-list endpoint always
 // returns an empty list (no existing PR) — the happy-path scenario for
 // the first-time bootstrap. The rate-limit handler responds without an
 // X-OAuth-Scopes header so the scope preflight in Bootstrap treats the
-// token as non-OAuth ("unknown, trust it") and proceeds.
+// token as non-OAuth ("unknown, trust it") and proceeds. The Git Data
+// API handlers accept any input and return synthetic SHAs, capturing
+// the request bodies for later assertions.
 func buildBootstrapMock(t *testing.T) (*http.Client, *bootstrapCounters) {
 	t.Helper()
-	var c bootstrapCounters
+	c := &bootstrapCounters{}
+	blobIdx := 0
 	mockedClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatchHandler(
 			mock.GetRateLimit,
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				// No X-OAuth-Scopes header — preflight sees "unknown".
 				_, _ = w.Write([]byte(`{"rate":{"limit":5000,"remaining":4999}}`))
 			}),
 		),
@@ -121,8 +134,93 @@ func buildBootstrapMock(t *testing.T) (*http.Client, *bootstrapCounters) {
 				_ = json.NewEncoder(w).Encode(gh.PullRequest{Number: gh.Ptr(7)})
 			}),
 		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposGitCommitsByOwnerByRepoByCommitSha,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				parts := strings.Split(r.URL.Path, "/")
+				_ = json.NewEncoder(w).Encode(gh.Commit{
+					SHA:  gh.Ptr(parts[len(parts)-1]),
+					Tree: &gh.Tree{SHA: gh.Ptr("base-tree-sha")},
+				})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitBlobsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var b gh.Blob
+				_ = json.NewDecoder(r.Body).Decode(&b)
+				c.mu.Lock()
+				c.blobs = append(c.blobs, b)
+				blobIdx++
+				sha := "blob-sha-" + string(rune('0'+blobIdx))
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Blob{SHA: gh.Ptr(sha)})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitTreesByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					BaseTree string         `json:"base_tree"`
+					Tree     []gh.TreeEntry `json:"tree"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				c.mu.Lock()
+				c.treeEntries = append(c.treeEntries, body.Tree...)
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Tree{SHA: gh.Ptr("new-tree-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitCommitsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				c.mu.Lock()
+				_ = json.Unmarshal(body, &c.commit)
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Commit{SHA: gh.Ptr("new-commit-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PatchReposGitRefsByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				// Bootstrap targets a brand-new branch on the first run,
+				// so UpdateRef will 404 and CreateRef will take over. We
+				// still need to respond to both to keep the mock honest.
+				mock.WriteError(w, http.StatusNotFound, "ref not found")
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitRefsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Reference{
+					Ref:    gh.Ptr("refs/heads/releaser/pending-release"),
+					Object: &gh.GitObject{SHA: gh.Ptr("new-commit-sha")},
+				})
+			}),
+		),
 	)
-	return mockedClient, &c
+	return mockedClient, c
+}
+
+// pathsAndContents extracts (sorted path, content-bytes) pairs from the
+// captured blobs, in the order the tree entries were sent.
+func bootstrapBlobByPath(t *testing.T, c *bootstrapCounters) map[string]string {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.treeEntries) != len(c.blobs) {
+		t.Fatalf("tree entries (%d) and blobs (%d) out of sync", len(c.treeEntries), len(c.blobs))
+	}
+	out := make(map[string]string, len(c.blobs))
+	for i, entry := range c.treeEntries {
+		raw, err := base64.StdEncoding.DecodeString(c.blobs[i].GetContent())
+		if err != nil {
+			t.Fatalf("blob[%d] not base64: %v", i, err)
+		}
+		out[entry.GetPath()] = string(raw)
+	}
+	return out
 }
 
 func TestBootstrap_HappyPathCreatesBranchWorkflowsCommitAndPR(t *testing.T) {
@@ -161,49 +259,69 @@ func TestBootstrap_HappyPathCreatesBranchWorkflowsCommitAndPR(t *testing.T) {
 		t.Errorf("PR update count = %d, want 0 on first run", got)
 	}
 
-	// Verify the upstream now has the bootstrap branch with the version
-	// bump, the generated workflow, and the releaser.yaml all in one commit.
-	tmpClone := t.TempDir()
-	if out, err := exec.Command("git", "clone", "-q", "--branch", "releaser/pending-release", upstream, tmpClone).CombinedOutput(); err != nil {
-		t.Fatalf("clone for inspection: %v\n%s", err, out)
+	// Verify the bootstrap commit was built via the Git Data API and
+	// carried all three expected files: the bumped Makefile, the
+	// generated workflow, and the releaser.yaml.
+	byPath := bootstrapBlobByPath(t, counters)
+	if got, ok := byPath["Makefile"]; !ok {
+		t.Errorf("Makefile blob missing from bootstrap commit; got paths: %v", keysOfStrMap(byPath))
+	} else if !strings.Contains(got, "VERSION := 0.1.0") {
+		t.Errorf("Makefile blob missing bumped version:\n%s", got)
 	}
-	makefile, err := os.ReadFile(filepath.Join(tmpClone, "Makefile"))
-	if err != nil {
-		t.Fatalf("read Makefile on bootstrap branch: %v", err)
+	if _, ok := byPath[".github/workflows/releaser.yml"]; !ok {
+		t.Errorf("generated workflow missing from bootstrap commit; got paths: %v", keysOfStrMap(byPath))
 	}
-	if !strings.Contains(string(makefile), "VERSION := 0.1.0") {
-		t.Errorf("Makefile on bootstrap branch missing bumped version:\n%s", makefile)
+	if got, ok := byPath[".github/releaser.yaml"]; !ok {
+		t.Errorf("releaser.yaml missing from bootstrap commit; got paths: %v", keysOfStrMap(byPath))
+	} else if !strings.Contains(got, "adapter:") {
+		t.Errorf(".github/releaser.yaml blob content unexpected:\n%s", got)
 	}
-	if _, err := os.Stat(filepath.Join(tmpClone, ".github", "workflows", "releaser.yml")); err != nil {
-		t.Errorf("generated workflow missing from bootstrap branch: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(tmpClone, ".github", "releaser.yaml")); err != nil {
-		t.Errorf("releaser.yaml missing from bootstrap branch: %v", err)
+
+	counters.mu.Lock()
+	defer counters.mu.Unlock()
+
+	// Every tree entry uses regular-file mode.
+	for _, e := range counters.treeEntries {
+		if e.GetMode() != "100644" {
+			t.Errorf("tree entry %q mode = %q, want 100644", e.GetPath(), e.GetMode())
+		}
 	}
 
 	// Commit subject must match the workflow's publish-detection regex
 	// so merging the PR routes to publish on the first run.
-	out, err := exec.Command("git", "-C", tmpClone, "log", "-1", "--format=%s").CombinedOutput()
-	if err != nil {
-		t.Fatalf("git log: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != "chore(release): prepare v0.1.0" {
+	if got := counters.commit.Message; got != "chore(release): prepare v0.1.0" {
 		t.Errorf("commit subject = %q, want 'chore(release): prepare v0.1.0'", got)
+	}
+
+	// The bare upstream is not pushed to anymore — all writes go via API.
+	out, err := exec.Command("git", "-C", upstream, "branch", "--list", "releaser/pending-release").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git branch --list: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "releaser/pending-release") {
+		t.Errorf("Bootstrap must not push to the local upstream; bare repo got the branch:\n%s", out)
 	}
 
 	// Sanity-check the stdout banner.
 	for _, want := range []string{
 		"Repository: bombfork/releaser-test",
 		"Default branch: main",
-		"Generated workflow files",
-		"Rewrote 1 version file(s) to 0.1.0",
-		"Force-pushed releaser/pending-release",
+		"Rendered 1 workflow file",
+		"Created signed commit new-commit-sha on releaser/pending-release",
 		"Created PR #7",
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("stdout missing %q; full output:\n%s", want, stdout.String())
 		}
 	}
+}
+
+func keysOfStrMap(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 // When the scope probe reports an OAuth token that lacks the workflow
@@ -370,6 +488,8 @@ func TestBootstrap_ReplaceUpdatesExistingPR(t *testing.T) {
 	}
 
 	// Mock that always reports an existing PR (so the update path runs).
+	// Includes Git Data API handlers because Replace=true proceeds past
+	// the existing-PR check and creates the signed commit.
 	var prCreate, prUpdate atomic.Int32
 	httpClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatchHandler(
@@ -402,6 +522,36 @@ func TestBootstrap_ReplaceUpdatesExistingPR(t *testing.T) {
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				prUpdate.Add(1)
 				_ = json.NewEncoder(w).Encode(gh.PullRequest{Number: gh.Ptr(11)})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposGitCommitsByOwnerByRepoByCommitSha,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Commit{Tree: &gh.Tree{SHA: gh.Ptr("base-tree-sha")}})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitBlobsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Blob{SHA: gh.Ptr("blob-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitTreesByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Tree{SHA: gh.Ptr("new-tree-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitCommitsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Commit{SHA: gh.Ptr("new-commit-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PatchReposGitRefsByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Reference{Object: &gh.GitObject{SHA: gh.Ptr("new-commit-sha")}})
 			}),
 		),
 	)

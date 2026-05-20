@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"sort"
 
 	"github.com/go-git/go-git/v5/plumbing/transport"
 
@@ -18,10 +21,11 @@ import (
 //
 // Bootstrap drives the day-1 first-release dance: it materializes the
 // generated workflow files, rewrites the version-location files to the
-// chosen FirstVersion, commits the lot on a side branch using the same
-// chore(release): prepare vX.Y.Z subject Prepare uses, force-pushes the
-// branch, and opens a pull request whose merge will route to Publish via
-// the workflow's existing prepare-commit detection.
+// chosen FirstVersion, and creates a single commit on a side branch via
+// the GitHub Git Data API — so the commit is signed by GitHub's
+// web-flow key — using the same chore(release): prepare vX.Y.Z subject
+// Prepare uses. A pull request is then opened whose merge will route to
+// Publish via the workflow's existing prepare-commit detection.
 type BootstrapInputs struct {
 	Config        config.Config
 	Adapter       adapter.Adapter
@@ -39,16 +43,18 @@ type BootstrapInputs struct {
 	ActionRef     string
 	ActionVersion string
 
-	// RemoteURL overrides the URL used by git fetch and push. When
-	// empty, defaults to the standard GitHub HTTPS URL for the detected
-	// owner/repo. Tests inject a local bare-repo path here so the
-	// transport never touches the network.
+	// RemoteURL overrides the URL used by the read-only fetch of
+	// origin. When empty, defaults to the standard GitHub HTTPS URL for
+	// the detected owner/repo. Tests inject a local bare-repo path here
+	// so the fetch transport never touches the network. The bootstrap
+	// commit is created via the GitHub Git Data API, not pushed via
+	// this URL.
 	RemoteURL string
 
-	// Auth overrides the auth method used by git fetch and push. When
-	// nil, defaults to TokenAuth(TokenProvider.GetToken()). Tests that
-	// inject a local RemoteURL set this to nil explicitly (no auth
-	// needed for a file path).
+	// Auth overrides the auth method used by the read-only fetch of
+	// origin. When nil, defaults to TokenAuth(TokenProvider.GetToken()).
+	// Tests that inject a local RemoteURL set this to nil explicitly
+	// (no auth needed for a file path).
 	Auth transport.AuthMethod
 
 	// Replace, when true, force-pushes the bootstrap branch and updates
@@ -198,45 +204,50 @@ func Bootstrap(ctx context.Context, repoRoot string, in BootstrapInputs) error {
 	}
 	logln(out, "Fetched origin")
 
-	origHEAD, err := CaptureHEAD(repoRoot)
+	parentSHA, err := ResolveLocalRef(repoRoot, originDefaultRef)
 	if err != nil {
-		return fmt.Errorf("capture HEAD: %w", err)
+		return fmt.Errorf("resolve parent commit: %w", err)
 	}
-	defer func() {
-		if rerr := RestoreHEAD(repoRoot, origHEAD); rerr != nil {
-			logf(out, "Warning: could not restore original branch: %v\n", rerr)
-		}
-	}()
 
-	if err := ResetBranchFromRef(repoRoot, branchName, originDefaultRef); err != nil {
-		return fmt.Errorf("reset branch: %w", err)
-	}
-	logf(out, "Reset branch %s from origin/%s\n", branchName, defaultBranch)
-
-	if err := generate.Generate(repoRoot, generate.Inputs{
+	generated, err := generate.GenerateFiles(generate.Inputs{
 		Config:        in.Config,
 		Adapter:       in.Adapter,
 		ActionRef:     in.ActionRef,
 		ActionVersion: in.ActionVersion,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("generate workflows: %w", err)
 	}
-	logln(out, "Generated workflow files")
+	logf(out, "Rendered %d workflow file(s)\n", len(generated))
 
-	if err := RewriteVersionFiles(repoRoot, in.Config, in.FirstVersion); err != nil {
-		return fmt.Errorf("rewrite version files: %w", err)
+	versionFiles, err := PlanVersionFileRewrites(repoRoot, originDefaultRef, in.Config, in.FirstVersion)
+	if err != nil {
+		return fmt.Errorf("plan version file rewrites: %w", err)
 	}
-	logf(out, "Rewrote %d version file(s) to %s\n", len(in.Config.Adapter.Version.Locations), in.FirstVersion)
 
-	if _, err := CommitWithIdentity(repoRoot, identity, commitMsg); err != nil {
-		return fmt.Errorf("commit bootstrap: %w", err)
+	// #nosec G304 -- repoRoot is caller-supplied; .github/releaser.yaml is the
+	// known fixed path the user just wrote via `releaser init`.
+	yamlBytes, err := os.ReadFile(filepath.Join(repoRoot, ".github", "releaser.yaml"))
+	if err != nil {
+		return fmt.Errorf("read .github/releaser.yaml: %w", err)
 	}
-	logf(out, "Committed bootstrap as %s <%s>\n", identity.Name, identity.Email)
 
-	if err := ForcePush(repoRoot, branchName, remoteURL, auth); err != nil {
-		return fmt.Errorf("push branch: %w", err)
+	files := make([]github.FileChange, 0, len(generated)+len(versionFiles)+1)
+	for path, data := range generated {
+		files = append(files, github.FileChange{Path: path, Content: data, Mode: "100644"})
 	}
-	logf(out, "Force-pushed %s\n", branchName)
+	files = append(files, versionFiles...)
+	files = append(files, github.FileChange{Path: ".github/releaser.yaml", Content: yamlBytes, Mode: "100644"})
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+
+	newSHA, err := in.GitHubClient.CreateSignedCommit(
+		ctx, owner, repoName, branchName, parentSHA, files,
+		commitMsg, identity.Name, identity.Email,
+	)
+	if err != nil {
+		return fmt.Errorf("create signed commit: %w", err)
+	}
+	logf(out, "Created signed commit %s on %s (parent %s)\n", newSHA, branchName, parentSHA)
 
 	existing, err := in.GitHubClient.GetPRByHead(ctx, owner, repoName, branchName)
 	if errors.Is(err, github.ErrNotFound) {
