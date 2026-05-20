@@ -66,23 +66,19 @@ const (
 	authPickMode = iota
 	authAppFields
 	authTokenFields
-	authDefaultInfo
 )
 
-// Index of each mode in the authPickMode list. The order is "App first,
-// token second, default last" — the user has likely already created an
-// App or token if they're picking an explicit mode; default_token is
-// the get-started-quickly fallback.
+// Index of each mode in the authPickMode list. GitHub App is preferred
+// (auto-derived bot identity, workflows:write scope, downstream workflow
+// runs trigger normally) and pre-selected.
 const (
 	authModeIdxApp = iota
 	authModeIdxToken
-	authModeIdxDefault
 )
 
 var authModeChoices = []string{
 	"GitHub App",
 	"API token (PAT or installation token)",
-	"Default GITHUB_TOKEN",
 }
 
 // Three name inputs for github_app mode + cursor wraparound.
@@ -93,7 +89,7 @@ const authTokenFieldCount = 3
 
 // Advanced step covers workflow file + release/default branches. Bot
 // identity moved into stepAuth (token mode) or is auto-derived
-// (github_app) / defaulted (default_token).
+// (github_app).
 const advancedFieldCount = 3
 
 // Common GOOS / GOARCH values offered by the targets picker. Users with
@@ -317,8 +313,6 @@ func (m Model) Config() config.Config {
 				Name:  strings.TrimSpace(m.authBotName.Value()),
 				Email: strings.TrimSpace(m.authBotEmail.Value()),
 			}
-		case authModeIdxDefault:
-			cfg.Release.Auth = config.Auth{Mode: config.AuthModeDefaultToken}
 		}
 	}
 
@@ -600,7 +594,7 @@ func (m Model) updateVersionLocations(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.verRegex.Blur()
 			m.step = stepAuth
 			m.authSubstep = authPickMode
-			m.authModeIdx = authModeIdxDefault
+			m.authModeIdx = authModeIdxApp
 			return m, nil
 		}
 	}
@@ -664,9 +658,6 @@ func (m Model) updateAuth(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.authFieldFocus = 0
 				m.focusAuthField()
 				return m, textinput.Blink
-			case authModeIdxDefault:
-				m.authSubstep = authDefaultInfo
-				return m, nil
 			}
 		}
 		return m, nil
@@ -742,17 +733,6 @@ func (m Model) updateAuth(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.authBotEmail, cmd = m.authBotEmail.Update(msg)
 		}
 		return m, cmd
-
-	case authDefaultInfo:
-		if !isKey {
-			return m, nil
-		}
-		if key.Type == tea.KeyEnter {
-			m.err = ""
-			m.step = stepAdvancedPrompt
-			m.advancedChoiceIdx = 1
-			return m, nil
-		}
 	}
 	return m, nil
 }
@@ -1297,15 +1277,6 @@ func (m Model) viewAuth() string {
 		b.WriteString(renderLabeled("Bot name:                 ", m.authBotName, m.authFieldFocus == 1))
 		b.WriteString(renderLabeled("Bot email:                ", m.authBotEmail, m.authFieldFocus == 2))
 		b.WriteString("\n" + helpStyle.Render("tab next · shift+tab prev · enter (on last field) continue · esc abort"))
-	case authDefaultInfo:
-		b.WriteString(helpStyle.Render("Using the default GITHUB_TOKEN means:") + "\n")
-		b.WriteString("  • The release-prep step cannot push changes under .github/workflows/*\n")
-		b.WriteString("    (no workflows:write scope). Future releaser action-version bumps\n")
-		b.WriteString("    must be applied by hand.\n")
-		b.WriteString("  • Pushes and PRs created by the workflow will NOT trigger downstream\n")
-		b.WriteString("    workflow runs (GitHub's anti-recursion safeguard).\n\n")
-		b.WriteString(helpStyle.Render("Bot identity will default to github-actions[bot].") + "\n\n")
-		b.WriteString("\n" + helpStyle.Render("enter continue · esc abort"))
 	}
 	return b.String()
 }

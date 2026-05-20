@@ -101,7 +101,17 @@ func TestInit_NoFromNoTTY_ReturnsGuidanceError(t *testing.T) {
 func TestInit_RejectsPresetWithInvalidAuth(t *testing.T) {
 	repo := t.TempDir()
 	preset := filepath.Join(repo, "preset.yaml")
-	writeFile(t, preset, validConfig+`release:
+	writeFile(t, preset, `adapter:
+  type: generic
+  build:
+    command: make build
+    artifacts:
+      - dist/*
+  version:
+    locations:
+      - path: Makefile
+        regex: '^VERSION := (.*)$'
+release:
   auth:
     mode: token
 `)
@@ -123,7 +133,17 @@ func TestInit_RejectsPresetWithInvalidAuth(t *testing.T) {
 func TestInit_FromPresetWithGitHubAppAuth(t *testing.T) {
 	repo := t.TempDir()
 	preset := filepath.Join(repo, "preset.yaml")
-	writeFile(t, preset, validConfig+`release:
+	writeFile(t, preset, `adapter:
+  type: generic
+  build:
+    command: make build
+    artifacts:
+      - dist/*
+  version:
+    locations:
+      - path: Makefile
+        regex: '^VERSION := (.*)$'
+release:
   auth:
     mode: github_app
     app:
@@ -149,6 +169,36 @@ func TestInit_FromPresetWithGitHubAppAuth(t *testing.T) {
 	}
 	if got.Release.Auth.App == nil || got.Release.Auth.App.AppIDVar != "MY_APP_ID" {
 		t.Errorf("Auth.App = %+v", got.Release.Auth.App)
+	}
+}
+
+// init must reject a preset whose release.auth.mode is the removed
+// default_token, with an error directing the user to one of the
+// remaining two modes.
+func TestInit_RejectsPresetWithDefaultTokenAuthMode(t *testing.T) {
+	repo := t.TempDir()
+	preset := filepath.Join(repo, "preset.yaml")
+	writeFile(t, preset, `adapter:
+  type: generic
+  build:
+    command: make build
+    artifacts:
+      - dist/*
+  version:
+    locations:
+      - path: Makefile
+        regex: '^VERSION := (.*)$'
+release:
+  auth:
+    mode: default_token
+`)
+
+	r := runCLI(t, "init", "--from", preset, "--repo-root", repo)
+	if r.err == nil {
+		t.Fatal("expected init to fail for the removed default_token mode")
+	}
+	if !strings.Contains(r.err.Error(), "default_token is no longer supported") {
+		t.Errorf("error should mention default_token migration; got: %v", r.err)
 	}
 }
 

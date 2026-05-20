@@ -76,20 +76,14 @@ func TestGenerate_AuthModeRendersExpectedInputs(t *testing.T) {
 			forbid: []string{"app-id:", "app-installation-id:", "app-private-key:"},
 		},
 		{
-			name: "default_token",
-			auth: config.Auth{Mode: config.AuthModeDefaultToken},
-			want: []string{
-				"token: ${{ github.token }}",
-			},
-			forbid: []string{"app-id:", "app-installation-id:", "app-private-key:"},
-		},
-		{
-			name: "empty auth (defaults to default_token)",
+			name: "empty auth (no mode) emits neither auth block",
 			auth: config.Auth{},
-			want: []string{
-				"token: ${{ github.token }}",
+			forbid: []string{
+				"app-id:",
+				"app-installation-id:",
+				"app-private-key:",
+				"token:",
 			},
-			forbid: []string{"app-id:", "app-installation-id:", "app-private-key:"},
 		},
 	}
 

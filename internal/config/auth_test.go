@@ -7,10 +7,10 @@ import (
 	"github.com/bombfork/releaser/internal/config"
 )
 
-func TestDefaultRelease_AuthDefaultsToDefaultToken(t *testing.T) {
+func TestDefaultRelease_AuthHasNoDefault(t *testing.T) {
 	d := config.DefaultRelease()
-	if d.Auth.Mode != config.AuthModeDefaultToken {
-		t.Errorf("Auth.Mode = %q, want %q", d.Auth.Mode, config.AuthModeDefaultToken)
+	if d.Auth.Mode != "" {
+		t.Errorf("Auth.Mode = %q, want empty (no default — user must pick github_app or token)", d.Auth.Mode)
 	}
 	if d.Auth.App != nil {
 		t.Errorf("Auth.App = %+v, want nil", d.Auth.App)
@@ -20,10 +20,10 @@ func TestDefaultRelease_AuthDefaultsToDefaultToken(t *testing.T) {
 	}
 }
 
-func TestRelease_WithDefaults_NormalizesEmptyAuthMode(t *testing.T) {
+func TestRelease_WithDefaults_LeavesEmptyAuthMode(t *testing.T) {
 	got := config.Release{}.WithDefaults()
-	if got.Auth.Mode != config.AuthModeDefaultToken {
-		t.Errorf("Auth.Mode = %q, want %q", got.Auth.Mode, config.AuthModeDefaultToken)
+	if got.Auth.Mode != "" {
+		t.Errorf("Auth.Mode = %q, want empty (no default applied)", got.Auth.Mode)
 	}
 }
 
@@ -148,35 +148,22 @@ func TestRelease_ValidateAuth(t *testing.T) {
 			errMatch: "bot_identity must be set explicitly",
 		},
 		{
-			name: "default_token valid",
+			name: "empty mode is required",
 			release: config.Release{
 				BotIdentity: defaultBot,
-				Auth:        config.Auth{Mode: config.AuthModeDefaultToken},
-			},
-		},
-		{
-			name: "default_token rejects app",
-			release: config.Release{
-				BotIdentity: defaultBot,
-				Auth: config.Auth{
-					Mode: config.AuthModeDefaultToken,
-					App:  &config.AuthApp{AppIDVar: "X"},
-				},
+				Auth:        config.Auth{},
 			},
 			wantErr:  true,
-			errMatch: "release.auth.app must be unset",
+			errMatch: "release.auth.mode is required",
 		},
 		{
-			name: "default_token rejects token",
+			name: "default_token rejected with migration error",
 			release: config.Release{
 				BotIdentity: defaultBot,
-				Auth: config.Auth{
-					Mode:  config.AuthModeDefaultToken,
-					Token: &config.AuthToken{Secret: "FOO"},
-				},
+				Auth:        config.Auth{Mode: "default_token"},
 			},
 			wantErr:  true,
-			errMatch: "release.auth.token must be unset",
+			errMatch: "default_token is no longer supported",
 		},
 		{
 			name: "unknown mode",

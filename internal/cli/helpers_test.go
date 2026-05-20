@@ -51,7 +51,7 @@ func writeFile(t *testing.T, path string, body string) {
 }
 
 // validConfig is a configuration that satisfies the generic adapter's
-// ValidateConfig requirements and can be reused across tests.
+// ValidateConfig requirements and ValidateAuth. Reused across tests.
 const validConfig = `adapter:
   type: generic
   build:
@@ -62,6 +62,13 @@ const validConfig = `adapter:
     locations:
       - path: Makefile
         regex: '^VERSION := (.*)$'
+release:
+  auth:
+    mode: github_app
+    app:
+      app_id_var: RELEASER_APP_ID
+      installation_id_var: RELEASER_APP_INSTALLATION_ID
+      private_key_secret: RELEASER_APP_PRIVATE_KEY
 `
 
 // validGoConfig is a configuration that satisfies the (stricter) go
