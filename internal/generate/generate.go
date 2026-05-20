@@ -41,15 +41,14 @@ type Inputs struct {
 	ActionVersion string
 }
 
-// Generate writes the workflow file under repoRoot/.github/workflows/.
-// The file name comes from in.Config.Workflows (with defaults filled in).
-func Generate(repoRoot string, in Inputs) error {
+// GenerateFiles renders every workflow file the action needs and
+// returns them as a path -> bytes map keyed by repo-relative,
+// forward-slashed path (e.g. ".github/workflows/releaser.yml"). Pure:
+// no filesystem access. Used by Bootstrap to feed the Git Data API
+// without writing through the worktree.
+func GenerateFiles(in Inputs) (map[string][]byte, error) {
 	workflows := in.Config.Workflows.WithDefaults()
 	rel := in.Config.Release.WithDefaults()
-	dir := filepath.Join(repoRoot, ".github", "workflows")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return fmt.Errorf("mkdir %s: %w", dir, err)
-	}
 	snippets := in.Adapter.WorkflowSnippets(in.Config)
 	data := templateData{
 		ActionRef:     in.ActionRef,
@@ -67,7 +66,33 @@ func Generate(repoRoot string, in Inputs) error {
 	if rel.Auth.Token != nil {
 		data.AuthTokenSecret = rel.Auth.Token.Secret
 	}
-	return renderTo(filepath.Join(dir, workflows.File), "release.yml.tmpl", data)
+	body, err := render("release.yml.tmpl", data)
+	if err != nil {
+		return nil, err
+	}
+	return map[string][]byte{
+		".github/workflows/" + workflows.File: body,
+	}, nil
+}
+
+// Generate writes the workflow file under repoRoot/.github/workflows/.
+// The file name comes from in.Config.Workflows (with defaults filled in).
+// Thin wrapper around GenerateFiles for the disk-writing CLI commands.
+func Generate(repoRoot string, in Inputs) error {
+	files, err := GenerateFiles(in)
+	if err != nil {
+		return err
+	}
+	for rel, body := range files {
+		dest := filepath.Join(repoRoot, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
+		}
+		if err := atomicWriteFile(dest, body); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type templateData struct {
@@ -83,23 +108,25 @@ type templateData struct {
 	AuthTokenSecret       string
 }
 
-func renderTo(dest, name string, data templateData) error {
+// render reads the named template, executes it with data, and returns
+// the rendered bytes. Pure: no filesystem access.
+func render(name string, data templateData) ([]byte, error) {
 	raw, err := templatesFS.ReadFile("templates/" + name)
 	if err != nil {
-		return fmt.Errorf("read template %s: %w", name, err)
+		return nil, fmt.Errorf("read template %s: %w", name, err)
 	}
 	tmpl, err := template.New(name).
 		Delims("<<", ">>").
 		Funcs(template.FuncMap{"indent": indent}).
 		Parse(string(raw))
 	if err != nil {
-		return fmt.Errorf("parse template %s: %w", name, err)
+		return nil, fmt.Errorf("parse template %s: %w", name, err)
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {
-		return fmt.Errorf("execute template %s: %w", name, err)
+		return nil, fmt.Errorf("execute template %s: %w", name, err)
 	}
-	return atomicWriteFile(dest, buf.Bytes())
+	return buf.Bytes(), nil
 }
 
 // indent prefixes every non-empty line of s with n spaces.

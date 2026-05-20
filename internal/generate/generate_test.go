@@ -335,3 +335,32 @@ func TestGenerate_GenericAdapterAddsNoSetupSteps(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerateFiles_ReturnsPathBytesMap(t *testing.T) {
+	in := generate.Inputs{
+		Config:        config.Config{Adapter: config.Adapter{Type: "generic"}},
+		Adapter:       generic.New(),
+		ActionRef:     "main",
+		ActionVersion: "v1.2.3",
+	}
+	files, err := generate.GenerateFiles(in)
+	if err != nil {
+		t.Fatalf("GenerateFiles: %v", err)
+	}
+	want := ".github/workflows/" + config.DefaultWorkflows().File
+	body, ok := files[want]
+	if !ok {
+		t.Fatalf("missing entry for %q; got keys: %v", want, keysOf(files))
+	}
+	if !strings.Contains(string(body), "version: v1.2.3") {
+		t.Errorf("body missing rendered version input:\n%s", body)
+	}
+}
+
+func keysOf(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
