@@ -25,6 +25,15 @@ A single generated workflow (`.github/workflows/releaser.yml` by default) drives
 
 The workflow pins the action ref it consumes (`uses: bombfork/releaser@<commit-sha> # vX.Y.Z`). Releaser's own workflows and the templates it generates pin every `uses:` reference to a commit SHA — with the tag in a trailing comment — to reduce the blast radius of upstream action compromises. The action-version line is intentionally not in `adapter.version.locations`, because bumping it as part of the release PR would have the next release try to consume itself before publishing. After each release ships, bump the SHA (and comment) by hand to the just-released tag.
 
+### Commit signing
+
+Commits produced by `releaser release prepare` and `releaser bootstrap` are
+created through GitHub's Git Data API (blobs → tree → commit → ref). API-created
+commits are signed by GitHub's `web-flow` key regardless of the token used to
+authenticate, so projects whose default branch requires signed commits accept
+the resulting pending-release PR with no additional configuration. There is no
+user-facing setting; signing is implicit.
+
 ## Installation
 
 ```bash
