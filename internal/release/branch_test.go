@@ -35,152 +35,6 @@ func initBareUpstreamWithLocalClone(t *testing.T) (string, string) {
 	return upstream, local
 }
 
-func TestResetBranchFromRef_CreatesAndChecksOutBranch(t *testing.T) {
-	_, local := initBareUpstreamWithLocalClone(t)
-	if err := release.ResetBranchFromRef(local, "releaser/pending-release", "refs/heads/main"); err != nil {
-		t.Fatalf("ResetBranchFromRef: %v", err)
-	}
-	// HEAD should now be on the new branch.
-	out, err := exec.Command("git", "-C", local, "branch", "--show-current").CombinedOutput()
-	if err != nil {
-		t.Fatalf("git branch --show-current: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != "releaser/pending-release" {
-		t.Errorf("current branch = %q, want releaser/pending-release", got)
-	}
-}
-
-// Regression for issue #31: gitignored / untracked files in the worktree
-// (e.g. a local .env) must survive the branch reset.
-func TestResetBranchFromRef_PreservesUntrackedFiles(t *testing.T) {
-	_, local := initBareUpstreamWithLocalClone(t)
-
-	envPath := filepath.Join(local, ".env")
-	if err := os.WriteFile(envPath, []byte("SECRET=hunter2\n"), 0o644); err != nil {
-		t.Fatalf("write .env: %v", err)
-	}
-	gitignorePath := filepath.Join(local, ".gitignore")
-	if err := os.WriteFile(gitignorePath, []byte(".env\n"), 0o644); err != nil {
-		t.Fatalf("write .gitignore: %v", err)
-	}
-
-	if err := release.ResetBranchFromRef(local, "releaser/pending-release", "refs/heads/main"); err != nil {
-		t.Fatalf("ResetBranchFromRef: %v", err)
-	}
-
-	got, err := os.ReadFile(envPath)
-	if err != nil {
-		t.Fatalf(".env was removed: %v", err)
-	}
-	if string(got) != "SECRET=hunter2\n" {
-		t.Errorf(".env contents = %q, want preserved original", got)
-	}
-}
-
-func TestCommitWithIdentity_StagesAllAndUsesIdentity(t *testing.T) {
-	_, local := initBareUpstreamWithLocalClone(t)
-	if err := release.ResetBranchFromRef(local, "releaser/pending-release", "refs/heads/main"); err != nil {
-		t.Fatalf("ResetBranchFromRef: %v", err)
-	}
-	// Modify a tracked file and add an untracked one.
-	if err := os.WriteFile(filepath.Join(local, "version.txt"), []byte("0.2.0\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(local, "untracked.txt"), []byte("hi\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	id := release.Identity{Name: "bot[bot]", Email: "1+bot[bot]@users.noreply.github.com"}
-	hash, err := release.CommitWithIdentity(local, id, "chore(release): prepare v0.2.0")
-	if err != nil {
-		t.Fatalf("CommitWithIdentity: %v", err)
-	}
-	if hash == "" {
-		t.Fatal("empty hash returned")
-	}
-
-	out, err := exec.Command("git", "-C", local, "show", "-s", "--format=%an <%ae>%n%s", "HEAD").CombinedOutput()
-	if err != nil {
-		t.Fatalf("git show: %v\n%s", err, out)
-	}
-	got := string(out)
-	if !strings.Contains(got, "bot[bot] <1+bot[bot]@users.noreply.github.com>") {
-		t.Errorf("identity missing from commit:\n%s", got)
-	}
-	if !strings.Contains(got, "chore(release): prepare v0.2.0") {
-		t.Errorf("message missing from commit:\n%s", got)
-	}
-}
-
-func TestForcePush_PushesBranchToUpstream(t *testing.T) {
-	upstream, local := initBareUpstreamWithLocalClone(t)
-	if err := release.ResetBranchFromRef(local, "releaser/pending-release", "refs/heads/main"); err != nil {
-		t.Fatalf("ResetBranchFromRef: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(local, "v.txt"), []byte("0.2.0\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	id := release.Identity{Name: "bot[bot]", Email: "1+bot[bot]@users.noreply.github.com"}
-	if _, err := release.CommitWithIdentity(local, id, "chore(release): prepare v0.2.0"); err != nil {
-		t.Fatalf("CommitWithIdentity: %v", err)
-	}
-
-	// Push using the bare repo's filesystem path as the "remote URL".
-	if err := release.ForcePush(local, "releaser/pending-release", upstream, nil); err != nil {
-		t.Fatalf("ForcePush: %v", err)
-	}
-
-	// Upstream should now have the branch.
-	out, err := exec.Command("git", "-C", upstream, "branch", "--list", "releaser/pending-release").CombinedOutput()
-	if err != nil {
-		t.Fatalf("git branch --list: %v", err)
-	}
-	if !strings.Contains(string(out), "releaser/pending-release") {
-		t.Errorf("branch missing from upstream:\n%s", out)
-	}
-}
-
-func TestForcePush_OverwritesDivergentBranch(t *testing.T) {
-	upstream, local := initBareUpstreamWithLocalClone(t)
-	// Initial push to set the branch.
-	if err := release.ResetBranchFromRef(local, "releaser/pending-release", "refs/heads/main"); err != nil {
-		t.Fatalf("Reset: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(local, "v.txt"), []byte("first\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	id := release.Identity{Name: "bot[bot]", Email: "1+bot[bot]@users.noreply.github.com"}
-	if _, err := release.CommitWithIdentity(local, id, "first"); err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-	if err := release.ForcePush(local, "releaser/pending-release", upstream, nil); err != nil {
-		t.Fatalf("first push: %v", err)
-	}
-
-	// Reset again to main and make a divergent commit.
-	if err := release.ResetBranchFromRef(local, "releaser/pending-release", "refs/heads/main"); err != nil {
-		t.Fatalf("second reset: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(local, "v.txt"), []byte("second\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if _, err := release.CommitWithIdentity(local, id, "second"); err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-	if err := release.ForcePush(local, "releaser/pending-release", upstream, nil); err != nil {
-		t.Fatalf("force-push: %v", err)
-	}
-
-	// Upstream's tip should be the "second" commit.
-	out, err := exec.Command("git", "-C", upstream, "log", "releaser/pending-release", "-1", "--format=%s").CombinedOutput()
-	if err != nil {
-		t.Fatalf("git log: %v\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "second") {
-		t.Errorf("upstream tip = %s, expected 'second'", out)
-	}
-}
-
 func TestFetch_BringsInRemoteRef(t *testing.T) {
 	upstream, local := initBareUpstreamWithLocalClone(t)
 
@@ -200,13 +54,9 @@ func TestFetch_BringsInRemoteRef(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(local, "new.txt"), []byte("new\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	id := release.Identity{Name: "test", Email: "test@example.com"}
-	if _, err := release.CommitWithIdentity(local, id, "feat: new file"); err != nil {
-		t.Fatalf("Commit: %v", err)
-	}
-	if err := release.ForcePush(local, "main", upstream, nil); err != nil {
-		t.Fatalf("push: %v", err)
-	}
+	run(local, "add", "new.txt")
+	run(local, "commit", "-q", "-m", "feat: new file")
+	run(local, "push", "-q", "origin", "main")
 
 	if err := release.Fetch(secondLocal, upstream, nil); err != nil {
 		t.Fatalf("Fetch: %v", err)
@@ -217,6 +67,22 @@ func TestFetch_BringsInRemoteRef(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "feat: new file") {
 		t.Errorf("fetched ref = %q, expected to contain 'feat: new file'", out)
+	}
+}
+
+func TestResolveLocalRef_ReturnsSHA(t *testing.T) {
+	_, local := initBareUpstreamWithLocalClone(t)
+	got, err := release.ResolveLocalRef(local, "refs/heads/main")
+	if err != nil {
+		t.Fatalf("ResolveLocalRef: %v", err)
+	}
+	out, err := exec.Command("git", "-C", local, "rev-parse", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v\n%s", err, out)
+	}
+	want := strings.TrimSpace(string(out))
+	if got != want {
+		t.Errorf("ResolveLocalRef = %q, want %q", got, want)
 	}
 }
 
