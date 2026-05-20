@@ -63,9 +63,17 @@ func TestPrepare_DryRunDoesNotMutate(t *testing.T) {
 		t.Errorf("dry-run pushed a branch:\n%s", out)
 	}
 
-	// Output mentions the version, the branch, and the would-create/update PR.
+	// Output mentions the version, the branch, the would-create PR, and
+	// the GitHub-API-based signed-commit step.
 	body := stdout.String()
-	for _, want := range []string{"0.2.0", "releaser/pending-release", "Would create PR", "github-actions[bot]"} {
+	for _, want := range []string{
+		"0.2.0",
+		"releaser/pending-release",
+		"Would create PR",
+		"github-actions[bot]",
+		"Would create signed commit",
+		"via GitHub API",
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("dry-run output missing %q:\n%s", want, body)
 		}

@@ -277,6 +277,22 @@ func ForcePush(repoRoot, branchName, remoteURL string, auth transport.AuthMethod
 	return nil
 }
 
+// ResolveLocalRef returns the commit SHA the given revision resolves to
+// in the local clone (e.g. "refs/remotes/origin/main"). Used by Prepare
+// to discover the parent commit of the release-prep commit it then
+// creates via the GitHub Git Data API.
+func ResolveLocalRef(repoRoot, ref string) (string, error) {
+	r, err := git.PlainOpen(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("open repo: %w", err)
+	}
+	hash, err := r.ResolveRevision(plumbing.Revision(ref))
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", ref, err)
+	}
+	return hash.String(), nil
+}
+
 // GitHubHTTPSURL returns the HTTPS clone URL for owner/repo on github.com.
 func GitHubHTTPSURL(owner, repo string) string {
 	return fmt.Sprintf("https://github.com/%s/%s.git", owner, repo)

@@ -22,21 +22,23 @@ type PrepareInputs struct {
 	GitHubClient  *github.Client
 	TokenProvider github.TokenProvider
 
-	// RemoteURL overrides the URL used by git fetch and push. When
-	// empty, defaults to the standard GitHub HTTPS URL for the detected
-	// owner/repo. Tests inject a local bare-repo path here so the
-	// transport never touches the network.
+	// RemoteURL overrides the URL used by the read-only fetch of
+	// origin. When empty, defaults to the standard GitHub HTTPS URL for
+	// the detected owner/repo. Tests inject a local bare-repo path here
+	// so the fetch transport never touches the network. Commits are
+	// pushed via the GitHub Git Data API, not via this URL.
 	RemoteURL string
 
-	// Auth overrides the auth method used by git fetch and push. When
-	// nil, defaults to TokenAuth(TokenProvider.GetToken()). Tests that
-	// inject a local RemoteURL set this to nil explicitly (no auth
-	// needed for a file path).
+	// Auth overrides the auth method used by the read-only fetch of
+	// origin. When nil, defaults to TokenAuth(TokenProvider.GetToken()).
+	// Tests that inject a local RemoteURL set this to nil explicitly
+	// (no auth needed for a file path).
 	Auth transport.AuthMethod
 
-	// Force skips the worktree-clean safety check. The branch reset
-	// uses Force:true unconditionally, so a dirty worktree would
-	// otherwise silently discard uncommitted changes.
+	// Force is retained for backward compatibility with the workflow
+	// invocation surface; the API-based commit path doesn't touch the
+	// worktree, so worktree-cleanliness no longer matters. Reading this
+	// field has no effect.
 	Force bool
 
 	// DryRun runs the read-only steps (Fetch, GetRepo, BuildPlan,
@@ -61,9 +63,11 @@ type PrepareInputs struct {
 // Prepare maintains the pending-release pull request: it builds the
 // release plan against the repository's default branch (as reported by
 // the GitHub API, not assumed `main`), applies the version-file bump
+// in memory against origin/<default>, creates the release-prep commit
 // on a side branch (cfg.Release.WithDefaults().BranchName, default
-// "releaser/pending-release"), force-pushes that branch, and opens or
-// updates the matching pull request.
+// "releaser/pending-release") via the GitHub Git Data API — so the
+// commit is signed by GitHub's web-flow key — and opens or updates the
+// matching pull request.
 //
 // Identity, token, and target repository are resolved as follows:
 //
@@ -71,13 +75,14 @@ type PrepareInputs struct {
 //     the local origin remote URL.
 //   - Author/committer: cfg.Release.BotIdentity in CI mode
 //     (GITHUB_ACTIONS=true), the local git user.* config otherwise.
-//   - Token: in.TokenProvider.GetToken(); used for both fetch and push,
-//     and propagated to the GitHub API via in.GitHubClient.
+//   - Token: in.TokenProvider.GetToken(); used by the read-only fetch
+//     of origin and propagated to the GitHub API via in.GitHubClient.
 //
 // Prepare is idempotent: a re-run on the same default-branch HEAD
 // regenerates equivalent state and updates the open PR with the same
 // content. Returning nil with no side effects is the correct outcome
 // when no commits since the latest release warrant a version bump.
+// The local worktree is never modified.
 func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr error) {
 	out := in.Stdout
 	if out == nil {
@@ -130,17 +135,6 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 		return fmt.Errorf("fetch origin: %w", err)
 	}
 	logln(out, "Fetched origin")
-
-	if !in.Force {
-		if err := RequireCleanWorktree(repoRoot); err != nil {
-			if !in.DryRun {
-				return err
-			}
-			if _, werr := fmt.Fprintf(out, "Warning: %v\n\n", err); werr != nil {
-				return werr
-			}
-		}
-	}
 
 	plan, err := BuildPlanFromRef(repoRoot, originDefaultRef, in.Config, in.Adapter)
 	if err != nil {
@@ -197,41 +191,27 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 		return describePreparePlan(out, in, plan, defaultBranch, branchName, identity, commitMsg, title, body, report)
 	}
 
-	// Capture HEAD before we move it onto the release branch so the
-	// deferred restore can put the developer back on the branch they
-	// invoked Prepare from. Capture only matters for the side-effectful
-	// path; dry-run and the no-op/already-prepared early returns above
-	// never leave HEAD elsewhere.
-	origHEAD, err := CaptureHEAD(repoRoot)
+	parentSHA, err := ResolveLocalRef(repoRoot, originDefaultRef)
 	if err != nil {
-		return fmt.Errorf("capture HEAD: %w", err)
+		return fmt.Errorf("resolve parent commit: %w", err)
 	}
-	defer func() {
-		if err := RestoreHEAD(repoRoot, origHEAD); err != nil {
-			logf(out, "Warning: could not restore original branch: %v\n", err)
-		}
-	}()
-
-	if err := ResetBranchFromRef(repoRoot, branchName, originDefaultRef); err != nil {
-		return fmt.Errorf("reset branch: %w", err)
+	files, err := PlanVersionFileRewrites(repoRoot, originDefaultRef, in.Config, plan.NextVersion.String())
+	if err != nil {
+		return fmt.Errorf("plan version file rewrites: %w", err)
 	}
-	logf(out, "Reset branch %s from origin/%s\n", branchName, defaultBranch)
-	if err := RewriteVersionFiles(repoRoot, in.Config, plan.NextVersion.String()); err != nil {
-		return fmt.Errorf("rewrite version files: %w", err)
-	}
-	if n := len(in.Config.Adapter.Version.Locations); n > 0 {
-		logf(out, "Rewrote %d version file(s) to %s\n", n, plan.NextVersion)
+	if n := len(files); n > 0 {
+		logf(out, "Prepared %d version file change(s) for %s\n", n, plan.NextVersion)
 	} else {
-		logf(out, "No version files configured; will commit an empty bump for %s (library mode)\n", plan.NextVersion)
+		logf(out, "No version files configured; will create an empty commit for %s (library mode)\n", plan.NextVersion)
 	}
-	if _, err := CommitWithIdentity(repoRoot, identity, commitMsg); err != nil {
-		return fmt.Errorf("commit version bump: %w", err)
+	newSHA, err := in.GitHubClient.CreateSignedCommit(
+		ctx, owner, repoName, branchName, parentSHA, files,
+		commitMsg, identity.Name, identity.Email,
+	)
+	if err != nil {
+		return fmt.Errorf("create signed commit: %w", err)
 	}
-	logf(out, "Committed bump as %s <%s>\n", identity.Name, identity.Email)
-	if err := ForcePush(repoRoot, branchName, remoteURL, auth); err != nil {
-		return fmt.Errorf("push branch: %w", err)
-	}
-	logf(out, "Force-pushed %s\n", branchName)
+	logf(out, "Created signed commit %s on %s (parent %s)\n", newSHA, branchName, parentSHA)
 
 	existing, err := in.GitHubClient.GetPRByHead(ctx, owner, repoName, branchName)
 	if errors.Is(err, github.ErrNotFound) {
@@ -299,13 +279,12 @@ func describePreparePlan(out io.Writer, in PrepareInputs, plan *Plan, defaultBra
 	fmt.Fprintln(&buf, plan.String())
 	fmt.Fprintln(&buf, "Prepare actions (dry run)")
 	fmt.Fprintln(&buf, "-------------------------")
-	fmt.Fprintf(&buf, "Would reset branch %q from origin/%s\n", branchName, defaultBranch)
 	fmt.Fprintf(&buf, "Would rewrite version files to %s:\n", plan.NextVersion)
 	for _, loc := range in.Config.Adapter.Version.Locations {
 		fmt.Fprintf(&buf, "  - %s  (regex: %s)\n", loc.Path, loc.Regex)
 	}
-	fmt.Fprintf(&buf, "Would commit as %s <%s>: %q\n", identity.Name, identity.Email, commitMsg)
-	fmt.Fprintf(&buf, "Would force-push %q to origin\n", branchName)
+	fmt.Fprintf(&buf, "Would create signed commit on %q via GitHub API (parent: origin/%s) as %s <%s>: %q\n",
+		branchName, defaultBranch, identity.Name, identity.Email, commitMsg)
 
 	switch report.Outcome {
 	case "would-create":

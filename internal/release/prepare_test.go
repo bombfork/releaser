@@ -3,12 +3,15 @@ package release_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -63,20 +66,49 @@ func initPrepareFixture(t *testing.T) (upstream, local string) {
 	return upstream, local
 }
 
-// buildPrepareMock returns an *http.Client and counters tracking how
-// many times each PR endpoint is hit. The PR list endpoint returns an
-// empty list on the first call (so Prepare creates) and a populated
-// list on subsequent calls (so Prepare updates).
+// commitBody mirrors the wire shape go-github sends to CreateCommit
+// (tree and parents are SHAs, not nested objects). Used for decoding
+// captured request bodies in tests.
+type commitBody struct {
+	Author    *gh.CommitAuthor `json:"author,omitempty"`
+	Committer *gh.CommitAuthor `json:"committer,omitempty"`
+	Message   string           `json:"message,omitempty"`
+	Tree      string           `json:"tree,omitempty"`
+	Parents   []string         `json:"parents,omitempty"`
+}
+
+// prepareCounters tracks how many times each PR endpoint is hit and
+// captures the Git Data API request bodies so tests can assert on the
+// blobs/tree/commit/ref Prepare produces. mu guards every non-atomic
+// field — the API client serializes its calls, but the mock handlers
+// run on the test server's goroutines.
 type prepareCounters struct {
 	getRepo  atomic.Int32
 	prList   atomic.Int32
 	prCreate atomic.Int32
 	prUpdate atomic.Int32
+
+	mu               sync.Mutex
+	blobs            []gh.Blob
+	treeEntries      []gh.TreeEntry
+	commit           commitBody
+	updateRefSHA     string
+	updateRefForce   *bool
+	updateRefCalls   atomic.Int32
+	createRefRef     string
+	createRefSHA     string
+	createRefCalls   atomic.Int32
+	getCommitFor     string
+	refUpdateBlocked bool // when true, UpdateRef returns 404 so CreateRef takes over
 }
 
+// buildPrepareMock wires every endpoint Prepare touches. The PR list
+// endpoint returns an empty list on the first call (so Prepare creates)
+// and a populated list on subsequent calls (so Prepare updates).
 func buildPrepareMock(t *testing.T) (*http.Client, *prepareCounters) {
 	t.Helper()
-	var c prepareCounters
+	c := &prepareCounters{}
+	blobIdx := 0
 	mockedClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatchHandler(
 			mock.GetReposByOwnerByRepo,
@@ -121,8 +153,114 @@ func buildPrepareMock(t *testing.T) (*http.Client, *prepareCounters) {
 				_ = json.NewEncoder(w).Encode(gh.PullRequest{Number: gh.Ptr(42)})
 			}),
 		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposGitCommitsByOwnerByRepoByCommitSha,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				parts := strings.Split(r.URL.Path, "/")
+				c.mu.Lock()
+				c.getCommitFor = parts[len(parts)-1]
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Commit{
+					SHA:  gh.Ptr(parts[len(parts)-1]),
+					Tree: &gh.Tree{SHA: gh.Ptr("base-tree-sha")},
+				})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitBlobsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var b gh.Blob
+				_ = json.NewDecoder(r.Body).Decode(&b)
+				c.mu.Lock()
+				c.blobs = append(c.blobs, b)
+				blobIdx++
+				sha := "blob-sha-" + string(rune('0'+blobIdx))
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Blob{SHA: gh.Ptr(sha)})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitTreesByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					BaseTree string         `json:"base_tree"`
+					Tree     []gh.TreeEntry `json:"tree"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				c.mu.Lock()
+				c.treeEntries = append(c.treeEntries, body.Tree...)
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Tree{SHA: gh.Ptr("new-tree-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitCommitsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				c.mu.Lock()
+				_ = json.Unmarshal(body, &c.commit)
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Commit{SHA: gh.Ptr("new-commit-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PatchReposGitRefsByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				c.updateRefCalls.Add(1)
+				c.mu.Lock()
+				blocked := c.refUpdateBlocked
+				c.mu.Unlock()
+				if blocked {
+					mock.WriteError(w, http.StatusNotFound, "ref not found")
+					return
+				}
+				var ur gh.UpdateRef
+				_ = json.NewDecoder(r.Body).Decode(&ur)
+				c.mu.Lock()
+				c.updateRefSHA = ur.SHA
+				c.updateRefForce = ur.Force
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Reference{
+					Ref:    gh.Ptr(r.URL.Path),
+					Object: &gh.GitObject{SHA: gh.Ptr(ur.SHA)},
+				})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitRefsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				c.createRefCalls.Add(1)
+				var cr gh.CreateRef
+				_ = json.NewDecoder(r.Body).Decode(&cr)
+				c.mu.Lock()
+				c.createRefRef = cr.Ref
+				c.createRefSHA = cr.SHA
+				c.mu.Unlock()
+				_ = json.NewEncoder(w).Encode(gh.Reference{
+					Ref:    gh.Ptr(cr.Ref),
+					Object: &gh.GitObject{SHA: gh.Ptr(cr.SHA)},
+				})
+			}),
+		),
 	)
-	return mockedClient, &c
+	return mockedClient, c
+}
+
+// decodeBlobs returns the captured blob contents as raw bytes in the
+// order they were sent. Caller holds no lock; the mock has already run.
+func decodeBlobs(t *testing.T, c *prepareCounters) [][]byte {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([][]byte, 0, len(c.blobs))
+	for i, b := range c.blobs {
+		raw, err := base64.StdEncoding.DecodeString(b.GetContent())
+		if err != nil {
+			t.Fatalf("blob[%d] not base64: %v", i, err)
+		}
+		out = append(out, raw)
+	}
+	return out
 }
 
 func TestPrepare_CreatesPendingReleasePRAndBranchOnFirstRun(t *testing.T) {
@@ -159,35 +297,61 @@ func TestPrepare_CreatesPendingReleasePRAndBranchOnFirstRun(t *testing.T) {
 		t.Errorf("PR update count = %d, want 0 on first run", got)
 	}
 
-	// Upstream now has the branch.
+	// The release-prep commit was created via the Git Data API: one blob
+	// per version file, with the bumped contents.
+	blobs := decodeBlobs(t, counters)
+	if len(blobs) != 1 {
+		t.Fatalf("captured %d blobs, want 1 (single Makefile)", len(blobs))
+	}
+	if got := string(blobs[0]); !strings.Contains(got, "VERSION := 0.2.0") {
+		t.Errorf("blob content missing bumped version:\n%s", got)
+	}
+	counters.mu.Lock()
+	defer counters.mu.Unlock()
+
+	if len(counters.treeEntries) != 1 || counters.treeEntries[0].GetPath() != "Makefile" {
+		t.Errorf("tree entries = %+v; want one for Makefile", counters.treeEntries)
+	}
+	if counters.treeEntries[0].GetMode() != "100644" {
+		t.Errorf("Makefile mode = %q, want 100644", counters.treeEntries[0].GetMode())
+	}
+
+	// Author/committer reflect the configured (default) bot identity.
+	if got := counters.commit.Author.GetName(); got != "github-actions[bot]" {
+		t.Errorf("author name = %q, want github-actions[bot]", got)
+	}
+	if !strings.Contains(counters.commit.Message, "chore(release): prepare v0.2.0") {
+		t.Errorf("commit message = %q", counters.commit.Message)
+	}
+
+	// Parent is whatever origin/main resolved to locally.
+	wantParent, err := release.ResolveLocalRef(local, "refs/remotes/origin/main")
+	if err != nil {
+		t.Fatalf("resolve parent locally: %v", err)
+	}
+	if len(counters.commit.Parents) != 1 || counters.commit.Parents[0] != wantParent {
+		t.Errorf("commit parents = %v, want [%s]", counters.commit.Parents, wantParent)
+	}
+
+	// UpdateRef hit once with force=true and the new commit SHA.
+	if got := counters.updateRefCalls.Load(); got != 1 {
+		t.Errorf("UpdateRef calls = %d, want 1", got)
+	}
+	if counters.updateRefSHA != "new-commit-sha" {
+		t.Errorf("UpdateRef SHA = %q, want new-commit-sha", counters.updateRefSHA)
+	}
+	if counters.updateRefForce == nil || !*counters.updateRefForce {
+		t.Errorf("UpdateRef force = %v, want true", counters.updateRefForce)
+	}
+
+	// The local bare-repo upstream is unchanged (the Git Data API
+	// targets the *mock*, not the bare repo).
 	out, err := exec.Command("git", "-C", upstream, "branch", "--list", "releaser/pending-release").CombinedOutput()
 	if err != nil {
 		t.Fatalf("git branch --list: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "releaser/pending-release") {
-		t.Errorf("branch missing from upstream:\n%s", out)
-	}
-
-	// The branch's tip is a commit by the bot.
-	out, err = exec.Command("git", "-C", upstream, "log", "releaser/pending-release", "-1", "--format=%an <%ae>").CombinedOutput()
-	if err != nil {
-		t.Fatalf("git log: %v", err)
-	}
-	if !strings.Contains(string(out), "github-actions[bot]") {
-		t.Errorf("commit author = %q, want github-actions[bot]", out)
-	}
-
-	// And the Makefile on that branch contains the bumped version.
-	tmpClone := t.TempDir()
-	if out, err := exec.Command("git", "clone", "-q", "--branch", "releaser/pending-release", upstream, tmpClone).CombinedOutput(); err != nil {
-		t.Fatalf("clone for inspection: %v\n%s", err, out)
-	}
-	makefile, err := os.ReadFile(filepath.Join(tmpClone, "Makefile"))
-	if err != nil {
-		t.Fatalf("read Makefile: %v", err)
-	}
-	if !strings.Contains(string(makefile), "VERSION := 0.2.0") {
-		t.Errorf("Makefile missing bumped version:\n%s", makefile)
+	if strings.Contains(string(out), "releaser/pending-release") {
+		t.Errorf("Prepare must not push to the local upstream; bare repo got the branch:\n%s", out)
 	}
 }
 
@@ -325,9 +489,8 @@ func TestPrepare_WritesProgressAndSummary(t *testing.T) {
 		"Default branch: main",
 		"Fetched origin",
 		"Plan: v0.1.0 → v0.2.0",
-		"Reset branch releaser/pending-release from origin/main",
-		"Rewrote 1 version file(s) to 0.2.0",
-		"Force-pushed releaser/pending-release",
+		"Prepared 1 version file change(s) for 0.2.0",
+		"Created signed commit new-commit-sha on releaser/pending-release",
 		"Created PR #42",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -433,13 +596,45 @@ func TestPrepare_SummaryOnError(t *testing.T) {
 		},
 	}
 
-	// Mock that errors on PR create — drives Prepare into its error path
-	// after the plan has been computed but before the PR is opened.
+	// Mock that succeeds on the Git Data API calls (so the commit is
+	// built) but errors on PR create — drives Prepare into its error
+	// path after the plan has been computed and the commit has landed,
+	// but before the PR is opened.
 	failingClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatchHandler(
 			mock.GetReposByOwnerByRepo,
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_ = json.NewEncoder(w).Encode(gh.Repository{DefaultBranch: gh.Ptr("main")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposGitCommitsByOwnerByRepoByCommitSha,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Commit{Tree: &gh.Tree{SHA: gh.Ptr("base-tree-sha")}})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitBlobsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Blob{SHA: gh.Ptr("blob-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitTreesByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Tree{SHA: gh.Ptr("new-tree-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PostReposGitCommitsByOwnerByRepo,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Commit{SHA: gh.Ptr("new-commit-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PatchReposGitRefsByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Reference{Object: &gh.GitObject{SHA: gh.Ptr("new-commit-sha")}})
 			}),
 		),
 		mock.WithRequestMatchHandler(
@@ -622,5 +817,47 @@ func TestPrepare_RestoresOriginalBranch(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(out)); got != "main" {
 		t.Errorf("current branch after Prepare = %q, want main", got)
+	}
+}
+
+// TestPrepare_LibraryModeProducesEmptyCommit covers the library-mode
+// path (no version files configured): no blobs are created, no tree is
+// built, and the commit reuses the parent's tree. The PR is still
+// opened with the right title.
+func TestPrepare_LibraryModeProducesEmptyCommit(t *testing.T) {
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
+
+	upstream, local := initPrepareFixture(t)
+
+	cfg := config.Config{
+		Adapter: config.Adapter{
+			Type:  "generic",
+			Build: config.Build{Command: "true"},
+			// Version.Locations intentionally empty — library mode.
+		},
+	}
+	httpClient, counters := buildPrepareMock(t)
+	ghClient := releasergh.NewClient(httpClient)
+	tp := &fakeTokenProvider{token: "ghs_testtoken"}
+
+	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		RemoteURL: upstream,
+	}); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	counters.mu.Lock()
+	defer counters.mu.Unlock()
+	if len(counters.blobs) != 0 {
+		t.Errorf("captured %d blobs, want 0 in library mode", len(counters.blobs))
+	}
+	if len(counters.treeEntries) != 0 {
+		t.Errorf("captured %d tree entries, want 0 in library mode", len(counters.treeEntries))
+	}
+	// Commit tree SHA equals the parent's tree (library-mode empty commit).
+	if counters.commit.Tree != "base-tree-sha" {
+		t.Errorf("commit tree SHA = %q, want base-tree-sha (parent's)", counters.commit.Tree)
 	}
 }
