@@ -110,20 +110,32 @@ func (c *Client) CreateCommit(
 		return "", errors.New("create commit: response missing SHA")
 	}
 
+	// Probe ref existence with a GET before deciding between update and
+	// create. Branching on the update error would be fragile: PATCH on a
+	// missing ref returns 422 "Reference does not exist" (not 404),
+	// which is indistinguishable by status code from other validation
+	// failures. The missing-ref case is routine — repos with
+	// delete-branch-on-merge lose the release branch on every merged
+	// pending-release PR.
 	refPath := "heads/" + strings.TrimPrefix(branch, "refs/heads/")
-	if _, _, err := c.gh.Git.UpdateRef(ctx, owner, repo, refPath, gh.UpdateRef{
-		SHA:   newSHA,
-		Force: gh.Ptr(true),
-	}); err != nil {
-		if !is404(err) {
+	_, _, err = c.gh.Git.GetRef(ctx, owner, repo, refPath)
+	switch {
+	case err == nil:
+		if _, _, err := c.gh.Git.UpdateRef(ctx, owner, repo, refPath, gh.UpdateRef{
+			SHA:   newSHA,
+			Force: gh.Ptr(true),
+		}); err != nil {
 			return "", fmt.Errorf("update ref %s: %w", refPath, err)
 		}
+	case is404(err):
 		if _, _, err := c.gh.Git.CreateRef(ctx, owner, repo, gh.CreateRef{
 			Ref: "refs/" + refPath,
 			SHA: newSHA,
 		}); err != nil {
 			return "", fmt.Errorf("create ref %s: %w", refPath, err)
 		}
+	default:
+		return "", fmt.Errorf("look up ref %s: %w", refPath, err)
 	}
 	return newSHA, nil
 }

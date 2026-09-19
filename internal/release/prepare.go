@@ -147,7 +147,11 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 	release := in.Config.Release.WithDefaults()
 	branchName := release.BranchName
 	report.BranchName = branchName
-	title := fmt.Sprintf("chore(release): v%s", plan.NextVersion)
+	// The "prepare" word matters: it is the publish-routing signal in
+	// the generated workflow. With squash merges configured to use the
+	// PR title as the commit message, the title is all that survives —
+	// it must match the same detection the prepare commit subject does.
+	title := fmt.Sprintf("chore(release): prepare v%s", plan.NextVersion)
 	body := FormatReleaseNotes(plan) + "\n\nMerging this PR will trigger the release workflow."
 	commitMsg := fmt.Sprintf("chore(release): prepare v%s", plan.NextVersion)
 
