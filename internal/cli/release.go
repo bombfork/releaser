@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -130,7 +129,7 @@ func runReleasePrepare(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 	if err != nil {
 		return err
 	}
-	if err := applyAppBotIdentity(cmd.Context(), cfg); err != nil {
+	if err := requireCIAppCreds(); err != nil {
 		return err
 	}
 	tp, err := github.DefaultTokenProvider()
@@ -196,7 +195,7 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 	if err != nil {
 		return err
 	}
-	if err := applyAppBotIdentity(cmd.Context(), cfg); err != nil {
+	if err := requireCIAppCreds(); err != nil {
 		return err
 	}
 	tp, err := github.DefaultTokenProvider()
@@ -222,27 +221,20 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 	})
 }
 
-// applyAppBotIdentity patches cfg.Release.BotIdentity from the GitHub
-// API when auth.mode is github_app. Kept at the CLI entry so the
-// `release` package's ResolveIdentity stays a pure function of (repo,
-// config). No-op in any other auth mode, or outside CI (no env vars to
-// read from).
-func applyAppBotIdentity(ctx context.Context, cfg *config.Config) error {
-	if cfg.Release.Auth.Mode != config.AuthModeGitHubApp {
+// requireCIAppCreds ensures the GitHub App credential env vars are all
+// present when running in CI. Without this guard, gh-token-go would
+// silently fall back to an ambient GITHUB_TOKEN and the release commit
+// would be created unsigned, attributed to github-actions[bot] instead
+// of the App.
+func requireCIAppCreds() error {
+	if os.Getenv("GITHUB_ACTIONS") != "true" {
 		return nil
 	}
-	env := release.ReadAppBotIdentityEnv()
-	if env.AppID == "" || env.PrivateKeyPEM == "" {
-		// Not in an environment where the App credentials are
-		// available — leave cfg alone. ResolveIdentity will fall
-		// back to the configured (or default) BotIdentity.
-		return nil
+	for _, v := range []string{"GH_TKN_APP_ID", "GH_TKN_APP_INST_ID", "GH_TKN_APP_PRIVATE_KEY"} {
+		if os.Getenv(v) == "" {
+			return fmt.Errorf("running in CI but %s is not set: the release workflow must supply GitHub App credentials (re-run `releaser generate` after upgrading)", v)
+		}
 	}
-	id, err := release.AppBotIdentity(ctx, env, nil)
-	if err != nil {
-		return fmt.Errorf("derive app bot identity: %w", err)
-	}
-	cfg.Release.BotIdentity = config.BotIdentity{Name: id.Name, Email: id.Email}
 	return nil
 }
 

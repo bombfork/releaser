@@ -69,7 +69,7 @@ func initBootstrapFixture(t *testing.T) (upstream, local string) {
 
 // bootstrapCounters tracks how many times each endpoint is hit and
 // captures the Git Data API request bodies so tests can assert on the
-// blob set, tree entries, and commit identity Bootstrap produces.
+// blob set, tree entries, and commit Bootstrap produces.
 type bootstrapCounters struct {
 	getRepo  atomic.Int32
 	prList   atomic.Int32
@@ -293,6 +293,15 @@ func TestBootstrap_HappyPathCreatesBranchWorkflowsCommitAndPR(t *testing.T) {
 		t.Errorf("commit subject = %q, want 'chore(release): prepare v0.1.0'", got)
 	}
 
+	// Author/committer must be omitted so GitHub attributes the commit
+	// to the App bot and signs it (explicit identity suppresses that).
+	if counters.commit.Author != nil {
+		t.Errorf("author = %+v, want omitted", counters.commit.Author)
+	}
+	if counters.commit.Committer != nil {
+		t.Errorf("committer = %+v, want omitted", counters.commit.Committer)
+	}
+
 	// The bare upstream is not pushed to anymore — all writes go via API.
 	out, err := exec.Command("git", "-C", upstream, "branch", "--list", "releaser/pending-release").CombinedOutput()
 	if err != nil {
@@ -307,7 +316,7 @@ func TestBootstrap_HappyPathCreatesBranchWorkflowsCommitAndPR(t *testing.T) {
 		"Repository: bombfork/releaser-test",
 		"Default branch: main",
 		"Rendered 1 workflow file",
-		"Created signed commit new-commit-sha on releaser/pending-release",
+		"Created commit new-commit-sha on releaser/pending-release",
 		"Created PR #7",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -489,7 +498,7 @@ func TestBootstrap_ReplaceUpdatesExistingPR(t *testing.T) {
 
 	// Mock that always reports an existing PR (so the update path runs).
 	// Includes Git Data API handlers because Replace=true proceeds past
-	// the existing-PR check and creates the signed commit.
+	// the existing-PR check and creates the commit.
 	var prCreate, prUpdate atomic.Int32
 	httpClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatchHandler(

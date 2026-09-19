@@ -21,11 +21,10 @@ import (
 //
 // Bootstrap drives the day-1 first-release dance: it materializes the
 // generated workflow files, rewrites the version-location files to the
-// chosen FirstVersion, and creates a single commit on a side branch via
-// the GitHub Git Data API — so the commit is signed by GitHub's
-// web-flow key — using the same chore(release): prepare vX.Y.Z subject
-// Prepare uses. A pull request is then opened whose merge will route to
-// Publish via the workflow's existing prepare-commit detection.
+// chosen FirstVersion, and creates a single commit on a side branch
+// using the same chore(release): prepare vX.Y.Z subject Prepare uses.
+// A pull request is then opened whose merge will route to Publish via
+// the workflow's existing prepare-commit detection.
 type BootstrapInputs struct {
 	Config        config.Config
 	Adapter       adapter.Adapter
@@ -134,11 +133,6 @@ func Bootstrap(ctx context.Context, repoRoot string, in BootstrapInputs) error {
 	}
 	logf(out, "Repository: %s/%s\n", owner, repoName)
 
-	identity, err := ResolveIdentity(repoRoot, in.Config)
-	if err != nil {
-		return fmt.Errorf("resolve identity: %w", err)
-	}
-
 	ghRepo, err := in.GitHubClient.GetRepo(ctx, owner, repoName)
 	if err != nil {
 		return fmt.Errorf("look up repository: %w", err)
@@ -240,14 +234,13 @@ func Bootstrap(ctx context.Context, repoRoot string, in BootstrapInputs) error {
 	files = append(files, github.FileChange{Path: ".github/releaser.yaml", Content: yamlBytes, Mode: "100644"})
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 
-	newSHA, err := in.GitHubClient.CreateSignedCommit(
-		ctx, owner, repoName, branchName, parentSHA, files,
-		commitMsg, identity.Name, identity.Email,
+	newSHA, err := in.GitHubClient.CreateCommit(
+		ctx, owner, repoName, branchName, parentSHA, files, commitMsg,
 	)
 	if err != nil {
-		return fmt.Errorf("create signed commit: %w", err)
+		return fmt.Errorf("create commit: %w", err)
 	}
-	logf(out, "Created signed commit %s on %s (parent %s)\n", newSHA, branchName, parentSHA)
+	logf(out, "Created commit %s on %s (parent %s)\n", newSHA, branchName, parentSHA)
 
 	existing, err := in.GitHubClient.GetPRByHead(ctx, owner, repoName, branchName)
 	if errors.Is(err, github.ErrNotFound) {

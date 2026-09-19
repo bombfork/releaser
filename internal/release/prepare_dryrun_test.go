@@ -64,14 +64,14 @@ func TestPrepare_DryRunDoesNotMutate(t *testing.T) {
 	}
 
 	// Output mentions the version, the branch, the would-create PR, and
-	// the GitHub-API-based signed-commit step.
+	// the GitHub-API-based commit step.
 	body := stdout.String()
 	for _, want := range []string{
 		"0.2.0",
 		"releaser/pending-release",
 		"Would create PR",
-		"github-actions[bot]",
-		"Would create signed commit",
+		"Would create commit",
+		"signed by the GitHub App bot",
 		"via GitHub API",
 	} {
 		if !strings.Contains(body, want) {

@@ -316,9 +316,13 @@ func TestPrepare_CreatesPendingReleasePRAndBranchOnFirstRun(t *testing.T) {
 		t.Errorf("Makefile mode = %q, want 100644", counters.treeEntries[0].GetMode())
 	}
 
-	// Author/committer reflect the configured (default) bot identity.
-	if got := counters.commit.Author.GetName(); got != "github-actions[bot]" {
-		t.Errorf("author name = %q, want github-actions[bot]", got)
+	// Author/committer must be omitted so GitHub attributes the commit
+	// to the App bot and signs it (explicit identity suppresses that).
+	if counters.commit.Author != nil {
+		t.Errorf("author = %+v, want omitted", counters.commit.Author)
+	}
+	if counters.commit.Committer != nil {
+		t.Errorf("committer = %+v, want omitted", counters.commit.Committer)
 	}
 	if !strings.Contains(counters.commit.Message, "chore(release): prepare v0.2.0") {
 		t.Errorf("commit message = %q", counters.commit.Message)
@@ -490,7 +494,7 @@ func TestPrepare_WritesProgressAndSummary(t *testing.T) {
 		"Fetched origin",
 		"Plan: v0.1.0 → v0.2.0",
 		"Prepared 1 version file change(s) for 0.2.0",
-		"Created signed commit new-commit-sha on releaser/pending-release",
+		"Created commit new-commit-sha on releaser/pending-release",
 		"Created PR #42",
 	} {
 		if !strings.Contains(stdout.String(), want) {

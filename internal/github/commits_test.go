@@ -40,7 +40,7 @@ type gitDataCapture struct {
 	getCommitSHA string
 }
 
-// gitDataMock wires the six git-data endpoints CreateSignedCommit hits
+// gitDataMock wires the six git-data endpoints CreateCommit hits
 // and returns the capture struct so tests can inspect what was sent.
 // updateRefFails, if true, makes UpdateRef return 404 so CreateRef
 // becomes the fallback path.
@@ -128,7 +128,7 @@ func gitDataMock(t *testing.T, updateRefFails bool) (*http.Client, *gitDataCaptu
 
 func blobSHA(i int) string { return "blob-sha-" + string(rune('0'+i)) }
 
-func TestCreateSignedCommit_HappyPath(t *testing.T) {
+func TestCreateCommit_HappyPath(t *testing.T) {
 	httpClient, cap := gitDataMock(t, false)
 	c := releasergh.NewClient(httpClient)
 
@@ -136,11 +136,11 @@ func TestCreateSignedCommit_HappyPath(t *testing.T) {
 		{Path: "Makefile", Content: []byte("VERSION := 0.2.0\nall:\n"), Mode: "100644"},
 		{Path: "scripts/release.sh", Content: []byte("#!/bin/sh\nexit 0\n"), Mode: "100755"},
 	}
-	newSHA, err := c.CreateSignedCommit(context.Background(), "owner", "repo",
+	newSHA, err := c.CreateCommit(context.Background(), "owner", "repo",
 		"releaser/pending-release", "parent-sha", files,
-		"chore(release): prepare v0.2.0", "github-actions[bot]", "bot@example.com")
+		"chore(release): prepare v0.2.0")
 	if err != nil {
-		t.Fatalf("CreateSignedCommit: %v", err)
+		t.Fatalf("CreateCommit: %v", err)
 	}
 	if newSHA != "new-commit-sha" {
 		t.Errorf("newSHA = %q, want new-commit-sha", newSHA)
@@ -185,15 +185,17 @@ func TestCreateSignedCommit_HappyPath(t *testing.T) {
 		t.Errorf("entry[1].Mode = %q, want 100755", got)
 	}
 
-	// Commit body carries identity, parent, tree.
+	// Commit body carries message, parent, tree — and crucially NO
+	// author/committer: their presence would suppress GitHub's
+	// App-token auto-signing (see CreateCommit doc comment).
 	if got := cap.commit.Message; got != "chore(release): prepare v0.2.0" {
 		t.Errorf("commit message = %q", got)
 	}
-	if got := cap.commit.Author.GetName(); got != "github-actions[bot]" {
-		t.Errorf("author name = %q", got)
+	if cap.commit.Author != nil {
+		t.Errorf("author = %+v, want omitted", cap.commit.Author)
 	}
-	if got := cap.commit.Committer.GetEmail(); got != "bot@example.com" {
-		t.Errorf("committer email = %q", got)
+	if cap.commit.Committer != nil {
+		t.Errorf("committer = %+v, want omitted", cap.commit.Committer)
 	}
 	if len(cap.commit.Parents) != 1 || cap.commit.Parents[0] != "parent-sha" {
 		t.Errorf("commit parents = %v, want [parent-sha]", cap.commit.Parents)
@@ -217,15 +219,15 @@ func TestCreateSignedCommit_HappyPath(t *testing.T) {
 	}
 }
 
-func TestCreateSignedCommit_CreatesRefWhenBranchAbsent(t *testing.T) {
+func TestCreateCommit_CreatesRefWhenBranchAbsent(t *testing.T) {
 	httpClient, cap := gitDataMock(t, true) // UpdateRef returns 404
 	c := releasergh.NewClient(httpClient)
 
-	if _, err := c.CreateSignedCommit(context.Background(), "owner", "repo",
+	if _, err := c.CreateCommit(context.Background(), "owner", "repo",
 		"releaser/pending-release", "parent-sha",
 		[]releasergh.FileChange{{Path: "Makefile", Content: []byte("VERSION := 0.2.0\n"), Mode: "100644"}},
-		"msg", "bot", "bot@example.com"); err != nil {
-		t.Fatalf("CreateSignedCommit: %v", err)
+		"msg"); err != nil {
+		t.Fatalf("CreateCommit: %v", err)
 	}
 
 	if got := cap.updateCalls.Load(); got != 1 {
@@ -239,14 +241,14 @@ func TestCreateSignedCommit_CreatesRefWhenBranchAbsent(t *testing.T) {
 	}
 }
 
-func TestCreateSignedCommit_EmptyFilesReusesParentTree(t *testing.T) {
+func TestCreateCommit_EmptyFilesReusesParentTree(t *testing.T) {
 	httpClient, cap := gitDataMock(t, false)
 	c := releasergh.NewClient(httpClient)
 
-	if _, err := c.CreateSignedCommit(context.Background(), "owner", "repo",
+	if _, err := c.CreateCommit(context.Background(), "owner", "repo",
 		"releaser/pending-release", "parent-sha", nil,
-		"chore(release): prepare v0.2.0 (library mode)", "bot", "bot@example.com"); err != nil {
-		t.Fatalf("CreateSignedCommit: %v", err)
+		"chore(release): prepare v0.2.0 (library mode)"); err != nil {
+		t.Fatalf("CreateCommit: %v", err)
 	}
 
 	if len(cap.blobs) != 0 {
@@ -261,14 +263,14 @@ func TestCreateSignedCommit_EmptyFilesReusesParentTree(t *testing.T) {
 	}
 }
 
-func TestCreateSignedCommit_RejectsUnsupportedMode(t *testing.T) {
+func TestCreateCommit_RejectsUnsupportedMode(t *testing.T) {
 	httpClient, _ := gitDataMock(t, false)
 	c := releasergh.NewClient(httpClient)
 
-	_, err := c.CreateSignedCommit(context.Background(), "owner", "repo",
+	_, err := c.CreateCommit(context.Background(), "owner", "repo",
 		"branch", "parent-sha",
 		[]releasergh.FileChange{{Path: "x", Content: []byte("y"), Mode: "120000"}},
-		"msg", "bot", "bot@example.com")
+		"msg")
 	if err == nil || !strings.Contains(err.Error(), "unsupported mode") {
 		t.Errorf("expected unsupported mode error, got %v", err)
 	}

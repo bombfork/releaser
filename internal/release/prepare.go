@@ -65,18 +65,16 @@ type PrepareInputs struct {
 // the GitHub API, not assumed `main`), applies the version-file bump
 // in memory against origin/<default>, creates the release-prep commit
 // on a side branch (cfg.Release.WithDefaults().BranchName, default
-// "releaser/pending-release") via the GitHub Git Data API — so the
-// commit is signed by GitHub's web-flow key — and opens or updates the
-// matching pull request.
+// "releaser/pending-release") via the GitHub Git Data API, and opens
+// or updates the matching pull request. The commit carries no explicit
+// author/committer: GitHub derives both from the App installation
+// token and signs the commit as `app-slug[bot]` (see
+// github.Client.CreateCommit).
 //
-// Identity, token, and target repository are resolved as follows:
-//
-//   - Owner/repo: GITHUB_REPOSITORY env var when set, else parsed from
-//     the local origin remote URL.
-//   - Author/committer: cfg.Release.BotIdentity in CI mode
-//     (GITHUB_ACTIONS=true), the local git user.* config otherwise.
-//   - Token: in.TokenProvider.GetToken(); used by the read-only fetch
-//     of origin and propagated to the GitHub API via in.GitHubClient.
+// Owner/repo come from the GITHUB_REPOSITORY env var when set, else
+// are parsed from the local origin remote URL. The token from
+// in.TokenProvider is used by the read-only fetch of origin and by the
+// GitHub API via in.GitHubClient.
 //
 // Prepare is idempotent: a re-run on the same default-branch HEAD
 // regenerates equivalent state and updates the open PR with the same
@@ -102,11 +100,6 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 	}
 	report.Repo = owner + "/" + repoName
 	logf(out, "Repository: %s\n", report.Repo)
-
-	identity, err := ResolveIdentity(repoRoot, in.Config)
-	if err != nil {
-		return fmt.Errorf("resolve identity: %w", err)
-	}
 
 	ghRepo, err := in.GitHubClient.GetRepo(ctx, owner, repoName)
 	if err != nil {
@@ -188,7 +181,7 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 			report.Outcome = "would-update"
 			report.PRNumber = existing.Number
 		}
-		return describePreparePlan(out, in, plan, defaultBranch, branchName, identity, commitMsg, title, body, report)
+		return describePreparePlan(out, in, plan, defaultBranch, branchName, commitMsg, title, body, report)
 	}
 
 	parentSHA, err := ResolveLocalRef(repoRoot, originDefaultRef)
@@ -204,14 +197,13 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 	} else {
 		logf(out, "No version files configured; will create an empty commit for %s (library mode)\n", plan.NextVersion)
 	}
-	newSHA, err := in.GitHubClient.CreateSignedCommit(
-		ctx, owner, repoName, branchName, parentSHA, files,
-		commitMsg, identity.Name, identity.Email,
+	newSHA, err := in.GitHubClient.CreateCommit(
+		ctx, owner, repoName, branchName, parentSHA, files, commitMsg,
 	)
 	if err != nil {
-		return fmt.Errorf("create signed commit: %w", err)
+		return fmt.Errorf("create commit: %w", err)
 	}
-	logf(out, "Created signed commit %s on %s (parent %s)\n", newSHA, branchName, parentSHA)
+	logf(out, "Created commit %s on %s (parent %s)\n", newSHA, branchName, parentSHA)
 
 	existing, err := in.GitHubClient.GetPRByHead(ctx, owner, repoName, branchName)
 	if errors.Is(err, github.ErrNotFound) {
@@ -274,7 +266,7 @@ func containsReleasePrepareCommit(commits []ParsedCommit) bool {
 // human-readable description. Output is accumulated in a buffer and
 // written to out in a single Write so a transient stdout error doesn't
 // leave a half-printed plan.
-func describePreparePlan(out io.Writer, in PrepareInputs, plan *Plan, defaultBranch, branchName string, identity Identity, commitMsg, title, body string, report *prepareReport) error {
+func describePreparePlan(out io.Writer, in PrepareInputs, plan *Plan, defaultBranch, branchName string, commitMsg, title, body string, report *prepareReport) error {
 	var buf bytes.Buffer
 	fmt.Fprintln(&buf, plan.String())
 	fmt.Fprintln(&buf, "Prepare actions (dry run)")
@@ -283,8 +275,8 @@ func describePreparePlan(out io.Writer, in PrepareInputs, plan *Plan, defaultBra
 	for _, loc := range in.Config.Adapter.Version.Locations {
 		fmt.Fprintf(&buf, "  - %s  (regex: %s)\n", loc.Path, loc.Regex)
 	}
-	fmt.Fprintf(&buf, "Would create signed commit on %q via GitHub API (parent: origin/%s) as %s <%s>: %q\n",
-		branchName, defaultBranch, identity.Name, identity.Email, commitMsg)
+	fmt.Fprintf(&buf, "Would create commit on %q via GitHub API (parent: origin/%s), authored and signed by the GitHub App bot: %q\n",
+		branchName, defaultBranch, commitMsg)
 
 	switch report.Outcome {
 	case "would-create":
