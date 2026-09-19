@@ -132,7 +132,9 @@ func Bootstrap(ctx context.Context, repoRoot string, in BootstrapInputs) error {
 	}
 
 	branchName := in.Config.Release.WithDefaults().BranchName
-	title := fmt.Sprintf("chore(release): v%s", in.FirstVersion)
+	// "prepare" in the title keeps squash-with-PR-title merges routing
+	// to publish — same reasoning as in Prepare.
+	title := fmt.Sprintf("chore(release): prepare v%s", in.FirstVersion)
 	body := fmt.Sprintf("Bootstrap release. Merging this PR will tag, build, and publish v%s.", in.FirstVersion)
 	commitMsg := fmt.Sprintf("chore(release): prepare v%s", in.FirstVersion)
 
