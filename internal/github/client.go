@@ -13,10 +13,10 @@ import (
 // Client wraps go-github with the narrow surface the releaser needs.
 // It is safe for concurrent use by multiple goroutines.
 //
-// Production callers build a client with NewClientFromToken (or
-// NewClientFromTokenProvider) and let go-github handle authentication.
-// Tests construct one with NewClient(mockedHTTPClient) using a
-// go-github-mock-backed http.Client to avoid hitting the real API.
+// Production callers build a client with NewClientFromToken and let
+// go-github handle authentication. Tests construct one with
+// NewClient(mockedHTTPClient) using a go-github-mock-backed
+// http.Client to avoid hitting the real API.
 type Client struct {
 	gh *gh.Client
 }
@@ -31,18 +31,6 @@ func NewClient(httpClient *http.Client) *Client {
 // using go-github's WithAuthToken helper.
 func NewClientFromToken(token string) *Client {
 	return &Client{gh: gh.NewClient(nil).WithAuthToken(token)}
-}
-
-// NewClientFromTokenProvider resolves a token via the provider once and
-// returns a client authenticated with it. For long-running operations
-// that may outlive an App token's lifetime, callers should construct a
-// new client when needed.
-func NewClientFromTokenProvider(tp TokenProvider) (*Client, error) {
-	token, err := tp.GetToken()
-	if err != nil {
-		return nil, fmt.Errorf("resolve github token: %w", err)
-	}
-	return NewClientFromToken(token), nil
 }
 
 // --- Repository -------------------------------------------------------

@@ -25,14 +25,55 @@ A single generated workflow (`.github/workflows/releaser.yml` by default) drives
 
 The workflow pins the action ref it consumes (`uses: bombfork/releaser@<commit-sha> # vX.Y.Z`). Releaser's own workflows and the templates it generates pin every `uses:` reference to a commit SHA — with the tag in a trailing comment — to reduce the blast radius of upstream action compromises. The action-version line is intentionally not in `adapter.version.locations`, because bumping it as part of the release PR would have the next release try to consume itself before publishing. After each release ships, bump the SHA (and comment) by hand to the just-released tag.
 
-### Commit signing
+## Requirements
 
-Commits produced by `releaser release prepare` and `releaser bootstrap` are
-created through GitHub's Git Data API (blobs → tree → commit → ref). API-created
-commits are signed by GitHub's `web-flow` key regardless of the token used to
-authenticate, so projects whose default branch requires signed commits accept
-the resulting pending-release PR with no additional configuration. There is no
-user-facing setting; signing is implicit.
+- **CI**: nothing beyond the generated workflow and a **GitHub App**
+  installed on the repository with `contents: write` and
+  `pull-requests: write` permissions. The workflow reads the App
+  credentials from a repo/org variable pair and a secret (default
+  names: `RELEASER_APP_ID`, `RELEASER_APP_INSTALLATION_ID`,
+  `RELEASER_APP_PRIVATE_KEY`).
+- **Local**: `git` and the `gh` CLI, logged in (`gh auth login`). The
+  GitHub token comes from `gh auth token` — no token env vars needed.
+  Pushes use your normal git credentials (SSH keys or credential
+  helper; `gh` commonly serves as the HTTPS credential helper).
+
+## Authentication
+
+GitHub App is the only supported auth mode (`release.auth.mode:
+github_app`). The configuration stores only the *names* of the
+workflow variables/secret carrying the credentials — never the values.
+
+Token/PAT auth was removed in v0.14.0: GitHub never signs API-created
+commits made with a PAT, so on repositories requiring signed commits
+the release PR could never be merged.
+
+### Commit signing & attribution
+
+Two execution domains, two identities — both doing what you'd expect:
+
+- **CI** (`GITHUB_ACTIONS=true`): commits are created through GitHub's
+  Git Data API with the App installation token, with author/committer
+  omitted. GitHub then attributes the commit to `<app-slug>[bot]` and
+  signs it with its own key — the commit shows **Verified**, and
+  branch protection requiring signed commits accepts the
+  pending-release PR with no extra configuration. (This behavior is
+  not in GitHub's official docs but is widely relied upon; see
+  [community discussion #50055](https://github.com/orgs/community/discussions/50055).)
+- **Local**: commits go through your own `git` in a temporary
+  worktree. They carry your identity, are signed if and only if your
+  git config signs (`commit.gpgsign` / `gpg.format`), and run your
+  hooks; the push uses your normal credentials. In short: exactly what
+  a manual `git commit && git push` would have produced.
+
+### Migrating from v0.13
+
+`release.auth.mode: token`, `release.auth.token`, and
+`release.bot_identity` are gone. In `.github/releaser.yaml`, switch to
+`mode: github_app` with an `app:` block, delete the removed keys, and
+re-run `releaser generate`. Repositories consuming the action must
+regenerate their workflow after upgrading — the old one passes a
+`token` input that no longer exists.
 
 ## Installation
 

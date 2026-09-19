@@ -11,11 +11,11 @@ import (
 )
 
 // FileChange describes a single tree-entry addition or update destined
-// for a CreateSignedCommit call. Content is the raw file bytes (no
-// pre-encoding); the client base64-encodes for blob creation. Mode is
-// the git-style permission string: "100644" for regular files and
-// "100755" for executable files. Symlinks and submodules are out of
-// scope.
+// for a release-prep commit. Content is the raw file bytes (no
+// pre-encoding); the API committer base64-encodes for blob creation.
+// Mode is the git-style permission string: "100644" for regular files
+// and "100755" for executable files. Symlinks and submodules are out
+// of scope.
 type FileChange struct {
 	Path    string
 	Content []byte

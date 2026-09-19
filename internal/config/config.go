@@ -36,7 +36,7 @@ type Config struct {
 	Adapter   Adapter   `yaml:"adapter"             desc:"Stack adapter type and the build / version fields owned by that adapter"`
 	Commit    Commit    `yaml:"commit,omitempty"    desc:"Commit-convention overrides for the conventional-commit to bump-level mapping"`
 	Workflows Workflows `yaml:"workflows,omitempty" desc:"File names for the workflows produced by 'releaser generate'"`
-	Release   Release   `yaml:"release,omitempty"   desc:"Pending-release branch, default branch, and CI bot identity used by 'releaser prepare'"`
+	Release   Release   `yaml:"release,omitempty"   desc:"Pending-release branch, default branch, and workflow auth used by 'releaser prepare'"`
 }
 
 // Adapter is the stack-adapter-owned configuration block. The shared
