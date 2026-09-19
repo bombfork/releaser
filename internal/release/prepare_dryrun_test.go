@@ -31,17 +31,16 @@ func TestPrepare_DryRunDoesNotMutate(t *testing.T) {
 
 	httpClient, counters := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	var stdout bytes.Buffer
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config:        cfg,
-		Adapter:       generic.New(),
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		RemoteURL:     upstream,
-		DryRun:        true,
-		Stdout:        &stdout,
+		Config:       cfg,
+		Adapter:      generic.New(),
+		GitHubClient: ghClient,
+		Committer:    release.APICommitter{Client: ghClient},
+		RemoteURL:    upstream,
+		DryRun:       true,
+		Stdout:       &stdout,
 	}); err != nil {
 		t.Fatalf("Prepare dry-run: %v", err)
 	}
@@ -98,12 +97,11 @@ func TestPrepare_DryRunHonorsExistingPR(t *testing.T) {
 
 	httpClient, _ := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	// First dry-run with the mock returning empty list (no PR yet).
 	var stdout1 bytes.Buffer
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream, DryRun: true, Stdout: &stdout1,
 	}); err != nil {
 		t.Fatalf("Prepare dry-run #1: %v", err)
@@ -115,7 +113,7 @@ func TestPrepare_DryRunHonorsExistingPR(t *testing.T) {
 	// Second dry-run: the mock's PR-list now returns the existing PR.
 	var stdout2 bytes.Buffer
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream, DryRun: true, Stdout: &stdout2,
 	}); err != nil {
 		t.Fatalf("Prepare dry-run #2: %v", err)
@@ -162,11 +160,10 @@ func TestPrepare_DryRunNoBumpableCommitsIsExplicit(t *testing.T) {
 	}
 	httpClient, _ := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_test"}
 
 	var stdout bytes.Buffer
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream, DryRun: true, Stdout: &stdout,
 	}); err != nil {
 		t.Fatalf("Prepare dry-run: %v", err)

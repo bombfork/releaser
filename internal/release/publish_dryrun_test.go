@@ -39,17 +39,15 @@ func TestPublish_DryRunCreatesNothingAndDoesNotBuild(t *testing.T) {
 	cfg.Adapter.Build.Command = "touch " + sentinel
 
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_test"}
 	var stdout bytes.Buffer
 	err := release.Publish(context.Background(), repo, release.PublishInputs{
-		Config:        cfg,
-		Adapter:       generic.New(),
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Stdout:        &stdout,
-		Stderr:        io.Discard,
-		RemoteURL:     upstream,
-		DryRun:        true,
+		Config:       cfg,
+		Adapter:      generic.New(),
+		GitHubClient: ghClient,
+		Stdout:       &stdout,
+		Stderr:       io.Discard,
+		RemoteURL:    upstream,
+		DryRun:       true,
 	})
 	if err != nil {
 		t.Fatalf("Publish dry-run: %v", err)
@@ -98,17 +96,15 @@ func TestPublish_DryRunWithExistingReleaseListsAssets(t *testing.T) {
 	})
 
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_test"}
 	var stdout bytes.Buffer
 	err := release.Publish(context.Background(), repo, release.PublishInputs{
-		Config:        publishCfg(),
-		Adapter:       generic.New(),
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Stdout:        &stdout,
-		Stderr:        io.Discard,
-		RemoteURL:     upstream,
-		DryRun:        true,
+		Config:       publishCfg(),
+		Adapter:      generic.New(),
+		GitHubClient: ghClient,
+		Stdout:       &stdout,
+		Stderr:       io.Discard,
+		RemoteURL:    upstream,
+		DryRun:       true,
 	})
 	if err != nil {
 		t.Fatalf("Publish dry-run: %v", err)

@@ -180,15 +180,13 @@ func buildPublishMock(t *testing.T, b publishMockBehavior) (*http.Client, *publi
 func runPublish(t *testing.T, repo, upstream string, cfg config.Config, httpClient *http.Client) error {
 	t.Helper()
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_test"}
 	return release.Publish(context.Background(), repo, release.PublishInputs{
-		Config:        cfg,
-		Adapter:       generic.New(),
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Stdout:        io.Discard,
-		Stderr:        io.Discard,
-		RemoteURL:     upstream,
+		Config:       cfg,
+		Adapter:      generic.New(),
+		GitHubClient: ghClient,
+		Stdout:       io.Discard,
+		Stderr:       io.Discard,
+		RemoteURL:    upstream,
 	})
 }
 
@@ -291,16 +289,14 @@ func TestPublish_WritesProgressAndSummary(t *testing.T) {
 
 	var stdout, summary bytes.Buffer
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_test"}
 	if err := release.Publish(context.Background(), repo, release.PublishInputs{
-		Config:        publishCfg(),
-		Adapter:       generic.New(),
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Stdout:        &stdout,
-		Stderr:        io.Discard,
-		RemoteURL:     upstream,
-		Summary:       &summary,
+		Config:       publishCfg(),
+		Adapter:      generic.New(),
+		GitHubClient: ghClient,
+		Stdout:       &stdout,
+		Stderr:       io.Discard,
+		RemoteURL:    upstream,
+		Summary:      &summary,
 	}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -359,16 +355,14 @@ func TestPublish_SummaryOnError(t *testing.T) {
 
 	var summary bytes.Buffer
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_test"}
 	err := release.Publish(context.Background(), repo, release.PublishInputs{
-		Config:        publishCfg(),
-		Adapter:       generic.New(),
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Stdout:        io.Discard,
-		Stderr:        io.Discard,
-		RemoteURL:     upstream,
-		Summary:       &summary,
+		Config:       publishCfg(),
+		Adapter:      generic.New(),
+		GitHubClient: ghClient,
+		Stdout:       io.Discard,
+		Stderr:       io.Discard,
+		RemoteURL:    upstream,
+		Summary:      &summary,
 	})
 	if err == nil {
 		t.Fatalf("Publish: expected error, got nil")
@@ -428,16 +422,14 @@ func TestPublish_SummaryOnNoOp(t *testing.T) {
 
 	var summary bytes.Buffer
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_test"}
 	if err := release.Publish(context.Background(), repo, release.PublishInputs{
-		Config:        publishCfg(),
-		Adapter:       generic.New(),
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Stdout:        io.Discard,
-		Stderr:        io.Discard,
-		RemoteURL:     upstream,
-		Summary:       &summary,
+		Config:       publishCfg(),
+		Adapter:      generic.New(),
+		GitHubClient: ghClient,
+		Stdout:       io.Discard,
+		Stderr:       io.Discard,
+		RemoteURL:    upstream,
+		Summary:      &summary,
 	}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -676,15 +668,13 @@ func TestPublish_LibraryMode_CreatesReleaseWithoutAssets(t *testing.T) {
 
 	var stdout bytes.Buffer
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_test"}
 	if err := release.Publish(context.Background(), repo, release.PublishInputs{
-		Config:        libraryPublishCfg(),
-		Adapter:       generic.New(),
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Stdout:        &stdout,
-		Stderr:        io.Discard,
-		RemoteURL:     upstream,
+		Config:       libraryPublishCfg(),
+		Adapter:      generic.New(),
+		GitHubClient: ghClient,
+		Stdout:       &stdout,
+		Stderr:       io.Discard,
+		RemoteURL:    upstream,
 	}); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}

@@ -24,11 +24,6 @@ import (
 	"github.com/bombfork/releaser/internal/release"
 )
 
-// fakeTokenProvider returns a fixed token from GetToken.
-type fakeTokenProvider struct{ token string }
-
-func (f *fakeTokenProvider) GetToken() (string, error) { return f.token, nil }
-
 // initPrepareFixture sets up a bare upstream + working clone, with an
 // initial Makefile committed and tagged v0.1.0, plus a feat: commit on
 // top. The working clone's origin points at the bare repo.
@@ -281,10 +276,9 @@ func TestPrepare_CreatesPendingReleasePRAndBranchOnFirstRun(t *testing.T) {
 
 	httpClient, counters := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 	}); err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -376,18 +370,17 @@ func TestPrepare_UpdatesExistingPROnRerun(t *testing.T) {
 
 	httpClient, counters := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	// First run: creates.
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 	}); err != nil {
 		t.Fatalf("first Prepare: %v", err)
 	}
 	// Second run: updates the existing PR.
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 	}); err != nil {
 		t.Fatalf("second Prepare: %v", err)
@@ -437,10 +430,9 @@ func TestPrepare_BailsWhenReleasePrepCommitAlreadyMerged(t *testing.T) {
 	}
 	httpClient, counters := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 	}); err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -475,11 +467,10 @@ func TestPrepare_WritesProgressAndSummary(t *testing.T) {
 
 	httpClient, _ := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	var stdout, summary bytes.Buffer
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 		Stdout:    &stdout,
 		Summary:   &summary,
@@ -562,11 +553,10 @@ func TestPrepare_SummaryOnNoOp(t *testing.T) {
 
 	httpClient, _ := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	var summary bytes.Buffer
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 		Summary:   &summary,
 	}); err != nil {
@@ -655,11 +645,10 @@ func TestPrepare_SummaryOnError(t *testing.T) {
 		),
 	)
 	ghClient := releasergh.NewClient(failingClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	var summary bytes.Buffer
 	err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 		Summary:   &summary,
 	})
@@ -720,10 +709,9 @@ func TestPrepare_NoBumpableCommitsIsNoop(t *testing.T) {
 
 	httpClient, counters := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 	}); err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -768,10 +756,9 @@ func TestPrepare_PreservesUntrackedFiles(t *testing.T) {
 	}
 	httpClient, _ := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 	}); err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -806,10 +793,9 @@ func TestPrepare_RestoresOriginalBranch(t *testing.T) {
 	}
 	httpClient, _ := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 	}); err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -843,10 +829,9 @@ func TestPrepare_LibraryModeProducesEmptyCommit(t *testing.T) {
 	}
 	httpClient, counters := buildPrepareMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	if err := release.Prepare(context.Background(), local, release.PrepareInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		RemoteURL: upstream,
 	}); err != nil {
 		t.Fatalf("Prepare: %v", err)

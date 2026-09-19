@@ -26,10 +26,17 @@ import (
 // A pull request is then opened whose merge will route to Publish via
 // the workflow's existing prepare-commit detection.
 type BootstrapInputs struct {
-	Config        config.Config
-	Adapter       adapter.Adapter
-	GitHubClient  *github.Client
-	TokenProvider github.TokenProvider
+	Config       config.Config
+	Adapter      adapter.Adapter
+	GitHubClient *github.Client
+
+	// Committer creates the bootstrap commit. Bootstrap runs from the
+	// interactive init flow, i.e. locally, so the CLI wires
+	// GitCommitter: the commit carries the user's identity and the
+	// push uses their credentials — including the `workflow` permission
+	// their transport grants (SSH, or an OAuth token with the workflow
+	// scope when pushing over HTTPS).
+	Committer Committer
 
 	// FirstVersion is the version string to write into version.locations
 	// and embed in the commit/PR subject. Callers are expected to have
@@ -45,15 +52,12 @@ type BootstrapInputs struct {
 	// RemoteURL overrides the URL used by the read-only fetch of
 	// origin. When empty, defaults to the standard GitHub HTTPS URL for
 	// the detected owner/repo. Tests inject a local bare-repo path here
-	// so the fetch transport never touches the network. The bootstrap
-	// commit is created via the GitHub Git Data API, not pushed via
-	// this URL.
+	// so the fetch transport never touches the network.
 	RemoteURL string
 
-	// Auth overrides the auth method used by the read-only fetch of
-	// origin. When nil, defaults to TokenAuth(TokenProvider.GetToken()).
-	// Tests that inject a local RemoteURL set this to nil explicitly
-	// (no auth needed for a file path).
+	// Auth is the auth method used by the read-only fetch of origin.
+	// Tests that inject a local RemoteURL leave it nil (no auth needed
+	// for a file path).
 	Auth transport.AuthMethod
 
 	// Replace, when true, force-pushes the bootstrap branch and updates
@@ -77,25 +81,6 @@ type ExistingBootstrap struct {
 	PRNumber   int
 	PRTitle    string
 	PRURL      string
-}
-
-// MissingScopeError is returned by Bootstrap when a preflight probe
-// reveals the local token is OAuth-backed but lacks a required scope.
-// The most common case is the `workflow` scope, required to push
-// changes under .github/workflows/* — the bootstrap commit always
-// includes the generated workflow file, so the push would fail with a
-// cryptic 403 mid-flow if not caught first.
-//
-// Callers (the CLI in particular) should branch on this error to
-// render guidance rather than letting the raw message surface to the
-// user.
-type MissingScopeError struct {
-	Required string
-	Have     []string
-}
-
-func (e *MissingScopeError) Error() string {
-	return fmt.Sprintf("token is missing required OAuth scope %q (have: %v)", e.Required, e.Have)
 }
 
 // BootstrapExistsError is returned by Bootstrap when Replace=false and
@@ -145,33 +130,11 @@ func Bootstrap(ctx context.Context, repoRoot string, in BootstrapInputs) error {
 	if remoteURL == "" {
 		remoteURL = GitHubHTTPSURL(owner, repoName)
 	}
-	auth := in.Auth
-	if auth == nil && in.RemoteURL == "" {
-		token, err := in.TokenProvider.GetToken()
-		if err != nil {
-			return fmt.Errorf("resolve token: %w", err)
-		}
-		auth = TokenAuth(token)
-	}
 
 	branchName := in.Config.Release.WithDefaults().BranchName
 	title := fmt.Sprintf("chore(release): v%s", in.FirstVersion)
 	body := fmt.Sprintf("Bootstrap release. Merging this PR will tag, build, and publish v%s.", in.FirstVersion)
 	commitMsg := fmt.Sprintf("chore(release): prepare v%s", in.FirstVersion)
-
-	// Pre-flight: if the local token is OAuth-backed and lacks the
-	// `workflow` scope, the push would fail server-side because the
-	// bootstrap commit includes the generated workflow file. Catch it
-	// here with a structured error so the CLI can render fix-it
-	// guidance instead of letting a cryptic 403 surface mid-flow.
-	scopes, scopeErr := in.GitHubClient.OAuthScopes(ctx)
-	if scopeErr != nil {
-		// Probe failed — proceed and let any real auth issues surface
-		// at fetch/push time. Don't turn a probe outage into a fatal.
-		logf(out, "Warning: could not probe token scopes (continuing): %v\n", scopeErr)
-	} else if len(scopes) > 0 && !github.HasOAuthScope(scopes, "workflow") {
-		return &MissingScopeError{Required: "workflow", Have: scopes}
-	}
 
 	// Pre-flight: if Replace=false, check for an existing PR up-front and
 	// bail with the sentinel so the CLI can confirm with the user before
@@ -193,7 +156,7 @@ func Bootstrap(ctx context.Context, repoRoot string, in BootstrapInputs) error {
 		}
 	}
 
-	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
+	if err := Fetch(repoRoot, remoteURL, in.Auth); err != nil {
 		return fmt.Errorf("fetch origin: %w", err)
 	}
 	logln(out, "Fetched origin")
@@ -234,9 +197,14 @@ func Bootstrap(ctx context.Context, repoRoot string, in BootstrapInputs) error {
 	files = append(files, github.FileChange{Path: ".github/releaser.yaml", Content: yamlBytes, Mode: "100644"})
 	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 
-	newSHA, err := in.GitHubClient.CreateCommit(
-		ctx, owner, repoName, branchName, parentSHA, files, commitMsg,
-	)
+	newSHA, err := in.Committer.Commit(ctx, CommitInput{
+		Owner:     owner,
+		Repo:      repoName,
+		Branch:    branchName,
+		ParentSHA: parentSHA,
+		Files:     files,
+		Message:   commitMsg,
+	})
 	if err != nil {
 		return fmt.Errorf("create commit: %w", err)
 	}
