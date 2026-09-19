@@ -4,6 +4,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/bombfork/releaser/internal/config"
 	"github.com/bombfork/releaser/internal/release"
 )
 
@@ -122,6 +123,66 @@ func TestCommitsSince_AfterTag(t *testing.T) {
 	}
 	if commits[0].Subject != "fix: three" || commits[1].Subject != "feat: four" {
 		t.Errorf("commits: %+v", commits)
+	}
+}
+
+// Commits merged via a merge-commit PR must be part of the plan. The
+// log iterator reaches the tag (the previous mainline tip) via the
+// merge's first parent before visiting the merged branch, so a walk
+// that aborts on first contact with the tag drops every branch commit
+// and computes a bumpable series as a no-op (the v0.13.0→v0.14.0
+// release regression).
+func TestCommitsSince_SeesCommitsBehindMergeCommit(t *testing.T) {
+	repo := t.TempDir()
+	initGitRepo(t, repo, "chore: initial")
+	gitTag(t, repo, "v0.1.0")
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("checkout", "-q", "-b", "feature")
+	run("commit", "--allow-empty", "-q", "-m", "feat: on branch")
+	run("commit", "--allow-empty", "-q", "-m", "fix: also on branch")
+	run("checkout", "-q", "main")
+	run("merge", "--no-ff", "-q", "-m", "Merge pull request #1 from feature", "feature")
+
+	commits, err := release.CommitsSince(repo, "v0.1.0")
+	if err != nil {
+		t.Fatalf("CommitsSince: %v", err)
+	}
+	subjects := make([]string, len(commits))
+	for i, c := range commits {
+		subjects[i] = c.Subject
+	}
+	if len(commits) != 3 {
+		t.Fatalf("got %d commits %v, want 3 (two branch commits + merge)", len(commits), subjects)
+	}
+	want := map[string]bool{
+		"feat: on branch":                    false,
+		"fix: also on branch":                false,
+		"Merge pull request #1 from feature": false,
+	}
+	for _, s := range subjects {
+		if _, ok := want[s]; !ok {
+			t.Errorf("unexpected commit %q", s)
+			continue
+		}
+		want[s] = true
+	}
+	for s, seen := range want {
+		if !seen {
+			t.Errorf("missing commit %q in %v", s, subjects)
+		}
+	}
+	parsed := make([]release.ParsedCommit, len(commits))
+	for i, c := range commits {
+		parsed[i] = release.ParseCommit(c, nil)
+	}
+	if got := release.MaxBump(parsed); got != config.BumpMinor {
+		t.Errorf("MaxBump = %q, want minor (feat on the merged branch)", got)
 	}
 }
 

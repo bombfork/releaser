@@ -1,7 +1,6 @@
 package release
 
 import (
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -9,7 +8,6 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"github.com/go-git/go-git/v5/plumbing/storer"
 )
 
 // LatestVersionTag returns the highest-precedence semver-shaped tag in
@@ -84,11 +82,30 @@ func CommitsSinceFromRef(repoRoot, sinceTag, fromRef string) ([]Commit, error) {
 		fromHash = *h
 	}
 
-	stopAt := plumbing.ZeroHash
+	// Exclude everything reachable from the tag, then collect the rest
+	// of what's reachable from fromHash — the equivalent of
+	// `git log sinceTag..fromRef`. Aborting the walk on first contact
+	// with the tag commit would be wrong: the log iterator descends the
+	// first-parent chain before merged branches, so after a merge-commit
+	// PR it reaches the tag (the previous mainline tip) while the merged
+	// branch's commits are still unvisited, and they'd be dropped from
+	// the plan (a bumpable feat/fix would compute as no-op).
+	excluded := map[plumbing.Hash]bool{}
 	if sinceTag != "" {
-		stopAt, err = resolveTagToCommit(repo, sinceTag)
+		stopAt, err := resolveTagToCommit(repo, sinceTag)
 		if err != nil {
 			return nil, err
+		}
+		tagIter, err := repo.Log(&git.LogOptions{From: stopAt})
+		if err != nil {
+			return nil, fmt.Errorf("walk tag ancestry: %w", err)
+		}
+		err = tagIter.ForEach(func(c *object.Commit) error {
+			excluded[c.Hash] = true
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("iterate tag ancestry: %w", err)
 		}
 	}
 
@@ -98,8 +115,8 @@ func CommitsSinceFromRef(repoRoot, sinceTag, fromRef string) ([]Commit, error) {
 	}
 	var commits []Commit
 	err = iter.ForEach(func(c *object.Commit) error {
-		if c.Hash == stopAt {
-			return storer.ErrStop
+		if excluded[c.Hash] {
+			return nil
 		}
 		subject, body := splitCommitMessage(c.Message)
 		commits = append(commits, Commit{
@@ -110,7 +127,7 @@ func CommitsSinceFromRef(repoRoot, sinceTag, fromRef string) ([]Commit, error) {
 		})
 		return nil
 	})
-	if err != nil && !errors.Is(err, storer.ErrStop) {
+	if err != nil {
 		return nil, fmt.Errorf("iterate log: %w", err)
 	}
 	slices.Reverse(commits)
