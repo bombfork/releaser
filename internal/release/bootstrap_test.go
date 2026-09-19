@@ -182,11 +182,10 @@ func buildBootstrapMock(t *testing.T) (*http.Client, *bootstrapCounters) {
 			}),
 		),
 		mock.WithRequestMatchHandler(
-			mock.PatchReposGitRefsByOwnerByRepoByRef,
+			mock.GetReposGitRefByOwnerByRepoByRef,
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				// Bootstrap targets a brand-new branch on the first run,
-				// so UpdateRef will 404 and CreateRef will take over. We
-				// still need to respond to both to keep the mock honest.
+				// Bootstrap targets a brand-new branch on the first run:
+				// the existence probe 404s and CreateRef takes over.
 				mock.WriteError(w, http.StatusNotFound, "ref not found")
 			}),
 		),
@@ -489,6 +488,13 @@ func TestBootstrap_ReplaceUpdatesExistingPR(t *testing.T) {
 			mock.PostReposGitCommitsByOwnerByRepo,
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_ = json.NewEncoder(w).Encode(gh.Commit{SHA: gh.Ptr("new-commit-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposGitRefByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				// Replace scenario: the bootstrap branch already exists.
+				_ = json.NewEncoder(w).Encode(gh.Reference{Object: &gh.GitObject{SHA: gh.Ptr("old-branch-sha")}})
 			}),
 		),
 		mock.WithRequestMatchHandler(

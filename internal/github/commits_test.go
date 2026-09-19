@@ -40,11 +40,11 @@ type gitDataCapture struct {
 	getCommitSHA string
 }
 
-// gitDataMock wires the six git-data endpoints CreateCommit hits
-// and returns the capture struct so tests can inspect what was sent.
-// updateRefFails, if true, makes UpdateRef return 404 so CreateRef
-// becomes the fallback path.
-func gitDataMock(t *testing.T, updateRefFails bool) (*http.Client, *gitDataCapture) {
+// gitDataMock wires the git-data endpoints CreateCommit hits and
+// returns the capture struct so tests can inspect what was sent.
+// refMissing, if true, makes the ref-existence GET return 404 so
+// CreateRef becomes the chosen path (UpdateRef must not be called).
+func gitDataMock(t *testing.T, refMissing bool) (*http.Client, *gitDataCapture) {
 	t.Helper()
 	cap := &gitDataCapture{}
 
@@ -97,13 +97,22 @@ func gitDataMock(t *testing.T, updateRefFails bool) (*http.Client, *gitDataCaptu
 			}),
 		),
 		mock.WithRequestMatchHandler(
-			mock.PatchReposGitRefsByOwnerByRepoByRef,
+			mock.GetReposGitRefByOwnerByRepoByRef,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				cap.updateCalls.Add(1)
-				if updateRefFails {
+				if refMissing {
 					mock.WriteError(w, http.StatusNotFound, "ref not found")
 					return
 				}
+				_ = json.NewEncoder(w).Encode(gh.Reference{
+					Ref:    gh.Ptr(r.URL.Path),
+					Object: &gh.GitObject{SHA: gh.Ptr("old-branch-sha")},
+				})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.PatchReposGitRefsByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				cap.updateCalls.Add(1)
 				_ = json.NewDecoder(r.Body).Decode(&cap.updateRef)
 				_ = json.NewEncoder(w).Encode(gh.Reference{
 					Ref:    gh.Ptr(r.URL.Path),
@@ -219,8 +228,12 @@ func TestCreateCommit_HappyPath(t *testing.T) {
 	}
 }
 
+// The branch routinely does not exist: repos with delete-branch-on-merge
+// lose it with every merged pending-release PR. PATCH on a missing ref
+// returns 422 (not 404) on the real API, so existence is probed with a
+// GET and UpdateRef must not be attempted at all.
 func TestCreateCommit_CreatesRefWhenBranchAbsent(t *testing.T) {
-	httpClient, cap := gitDataMock(t, true) // UpdateRef returns 404
+	httpClient, cap := gitDataMock(t, true) // GET ref returns 404
 	c := releasergh.NewClient(httpClient)
 
 	if _, err := c.CreateCommit(context.Background(), "owner", "repo",
@@ -230,11 +243,11 @@ func TestCreateCommit_CreatesRefWhenBranchAbsent(t *testing.T) {
 		t.Fatalf("CreateCommit: %v", err)
 	}
 
-	if got := cap.updateCalls.Load(); got != 1 {
-		t.Errorf("UpdateRef calls = %d, want 1", got)
+	if got := cap.updateCalls.Load(); got != 0 {
+		t.Errorf("UpdateRef calls = %d, want 0 when the ref is absent", got)
 	}
 	if got := cap.createCalls.Load(); got != 1 {
-		t.Errorf("CreateRef calls = %d, want 1 after UpdateRef 404", got)
+		t.Errorf("CreateRef calls = %d, want 1", got)
 	}
 	if cap.createRef.Ref != "refs/heads/releaser/pending-release" {
 		t.Errorf("CreateRef.Ref = %q, want refs/heads/releaser/pending-release", cap.createRef.Ref)

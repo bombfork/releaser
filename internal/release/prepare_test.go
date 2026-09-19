@@ -83,18 +83,17 @@ type prepareCounters struct {
 	prCreate atomic.Int32
 	prUpdate atomic.Int32
 
-	mu               sync.Mutex
-	blobs            []gh.Blob
-	treeEntries      []gh.TreeEntry
-	commit           commitBody
-	updateRefSHA     string
-	updateRefForce   *bool
-	updateRefCalls   atomic.Int32
-	createRefRef     string
-	createRefSHA     string
-	createRefCalls   atomic.Int32
-	getCommitFor     string
-	refUpdateBlocked bool // when true, UpdateRef returns 404 so CreateRef takes over
+	mu             sync.Mutex
+	blobs          []gh.Blob
+	treeEntries    []gh.TreeEntry
+	commit         commitBody
+	updateRefSHA   string
+	updateRefForce *bool
+	updateRefCalls atomic.Int32
+	createRefRef   string
+	createRefSHA   string
+	createRefCalls atomic.Int32
+	getCommitFor   string
 }
 
 // buildPrepareMock wires every endpoint Prepare touches. The PR list
@@ -199,16 +198,18 @@ func buildPrepareMock(t *testing.T) (*http.Client, *prepareCounters) {
 			}),
 		),
 		mock.WithRequestMatchHandler(
+			mock.GetReposGitRefByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Reference{
+					Ref:    gh.Ptr(r.URL.Path),
+					Object: &gh.GitObject{SHA: gh.Ptr("old-branch-sha")},
+				})
+			}),
+		),
+		mock.WithRequestMatchHandler(
 			mock.PatchReposGitRefsByOwnerByRepoByRef,
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				c.updateRefCalls.Add(1)
-				c.mu.Lock()
-				blocked := c.refUpdateBlocked
-				c.mu.Unlock()
-				if blocked {
-					mock.WriteError(w, http.StatusNotFound, "ref not found")
-					return
-				}
 				var ur gh.UpdateRef
 				_ = json.NewDecoder(r.Body).Decode(&ur)
 				c.mu.Lock()
@@ -623,6 +624,12 @@ func TestPrepare_SummaryOnError(t *testing.T) {
 			mock.PostReposGitCommitsByOwnerByRepo,
 			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_ = json.NewEncoder(w).Encode(gh.Commit{SHA: gh.Ptr("new-commit-sha")})
+			}),
+		),
+		mock.WithRequestMatchHandler(
+			mock.GetReposGitRefByOwnerByRepoByRef,
+			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(gh.Reference{Object: &gh.GitObject{SHA: gh.Ptr("old-branch-sha")}})
 			}),
 		),
 		mock.WithRequestMatchHandler(
