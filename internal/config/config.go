@@ -75,43 +75,28 @@ func (w Workflows) WithDefaults() Workflows {
 
 // Release configures the side-effecting half of the release process.
 type Release struct {
-	BranchName    string      `yaml:"branch_name,omitempty"    desc:"Head branch the pending-release pull request is opened from"`
-	DefaultBranch string      `yaml:"default_branch,omitempty" desc:"Project default branch name (used by 'releaser generate'; runtime uses the GitHub API)"`
-	BotIdentity   BotIdentity `yaml:"bot_identity,omitempty"   desc:"Git author and committer used for the version-bump commit when running in CI. Auto-derived from the App when auth.mode is github_app — set it explicitly for token mode."`
-	Auth          Auth        `yaml:"auth,omitempty"           desc:"How the generated workflow authenticates against the GitHub API at release time"`
-}
-
-// BotIdentity is the git author/committer used for releaser-driven
-// commits in CI mode. Defaults to the standard GitHub Actions bot, which
-// works out of the box for users relying on the built-in GITHUB_TOKEN.
-type BotIdentity struct {
-	Name  string `yaml:"name,omitempty"  desc:"Git author / committer name"`
-	Email string `yaml:"email,omitempty" desc:"Git author / committer email"`
+	BranchName    string `yaml:"branch_name,omitempty"    desc:"Head branch the pending-release pull request is opened from"`
+	DefaultBranch string `yaml:"default_branch,omitempty" desc:"Project default branch name (used by 'releaser generate'; runtime uses the GitHub API)"`
+	Auth          Auth   `yaml:"auth,omitempty"           desc:"How the generated workflow authenticates against the GitHub API at release time"`
 }
 
 // AuthMode names how the release workflow authenticates against the
-// GitHub API. The mode also drives how the bot identity is resolved at
-// runtime — see Release.BotIdentity.
+// GitHub API. GitHub App is the only supported mode: in CI, commits
+// are created via the API with the App installation token so GitHub
+// attributes and signs them as the App bot. Local runs commit through
+// the git CLI with the user's own identity and never need these
+// credentials.
 type AuthMode string
 
-const (
-	// AuthModeGitHubApp authenticates as a GitHub App installation. The
-	// bot identity is auto-derived from the App at runtime.
-	AuthModeGitHubApp AuthMode = "github_app"
-	// AuthModeToken authenticates with a user-supplied API token (PAT
-	// or installation token) read from a workflow secret. The bot
-	// identity must be set explicitly in BotIdentity.
-	AuthModeToken AuthMode = "token"
-)
+// AuthModeGitHubApp authenticates as a GitHub App installation.
+const AuthModeGitHubApp AuthMode = "github_app"
 
 // Auth describes how the generated workflow authenticates against the
-// GitHub API. It is consumed by `releaser generate` (to emit the right
-// inputs on the bombfork/releaser action) and by `releaser release` (to
-// know whether to auto-derive the bot identity from the App).
+// GitHub API. It is consumed by `releaser generate` to emit the
+// credential lookups on the bombfork/releaser action.
 type Auth struct {
-	Mode  AuthMode   `yaml:"mode,omitempty"  desc:"github_app | token"`
-	App   *AuthApp   `yaml:"app,omitempty"   desc:"Workflow var / secret names locating the GitHub App credentials (mode=github_app)"`
-	Token *AuthToken `yaml:"token,omitempty" desc:"Workflow secret name holding the API token (mode=token)"`
+	Mode AuthMode `yaml:"mode,omitempty" desc:"github_app (the only supported mode)"`
+	App  *AuthApp `yaml:"app,omitempty"  desc:"Workflow var / secret names locating the GitHub App credentials"`
 }
 
 // AuthApp names the workflow vars and secret that carry the GitHub App
@@ -123,23 +108,13 @@ type AuthApp struct {
 	PrivateKeySecret  string `yaml:"private_key_secret"  desc:"Workflow secret (under secrets.*) holding the App PEM private key"`
 }
 
-// AuthToken names the workflow secret carrying the API token.
-type AuthToken struct {
-	Secret string `yaml:"secret" desc:"Workflow secret (under secrets.*) holding the API token"`
-}
-
 // DefaultRelease returns the default Release configuration: the standard
-// pending-release branch name, "main" as the default branch, and the
-// GitHub Actions bot identity. Auth.Mode has no default — the user must
-// pick github_app or token explicitly.
+// pending-release branch name and "main" as the default branch.
+// Auth.Mode has no default — the user must set github_app explicitly.
 func DefaultRelease() Release {
 	return Release{
 		BranchName:    "releaser/pending-release",
 		DefaultBranch: "main",
-		BotIdentity: BotIdentity{
-			Name:  "github-actions[bot]",
-			Email: "41898282+github-actions[bot]@users.noreply.github.com",
-		},
 	}
 }
 
@@ -149,21 +124,15 @@ const (
 	DefaultAuthAppIDVar          = "RELEASER_APP_ID"
 	DefaultAuthInstallationIDVar = "RELEASER_APP_INSTALLATION_ID"
 	DefaultAuthPrivateKeySecret  = "RELEASER_APP_PRIVATE_KEY" //#nosec G101 -- name of the workflow secret, not its value
-	DefaultAuthTokenSecret       = "RELEASER_GH_TOKEN"        //#nosec G101 -- name of the workflow secret, not its value
 )
 
-// DefaultAuthApp returns the conventional var / secret names for app mode.
+// DefaultAuthApp returns the conventional var / secret names.
 func DefaultAuthApp() AuthApp {
 	return AuthApp{
 		AppIDVar:          DefaultAuthAppIDVar,
 		InstallationIDVar: DefaultAuthInstallationIDVar,
 		PrivateKeySecret:  DefaultAuthPrivateKeySecret,
 	}
-}
-
-// DefaultAuthToken returns the conventional secret name for token mode.
-func DefaultAuthToken() AuthToken {
-	return AuthToken{Secret: DefaultAuthTokenSecret}
 }
 
 // WithDefaults returns r with any unset fields filled in from DefaultRelease.
@@ -177,37 +146,28 @@ func (r Release) WithDefaults() Release {
 	if r.DefaultBranch == "" {
 		r.DefaultBranch = d.DefaultBranch
 	}
-	if r.BotIdentity.Name == "" {
-		r.BotIdentity.Name = d.BotIdentity.Name
-	}
-	if r.BotIdentity.Email == "" {
-		r.BotIdentity.Email = d.BotIdentity.Email
-	}
 	return r
 }
 
 // ValidateAuth checks that the Release.Auth block is internally
-// consistent and that the surrounding Release carries the fields its
-// chosen auth mode requires. Modes:
+// consistent: mode is github_app (the only supported mode) and App is
+// non-nil with all three credential names set.
 //
-//   - github_app: App is non-nil with all three names set. BotIdentity
-//     must NOT be user-set — it is auto-derived from the App at runtime,
-//     and a stale override would silently mis-attribute commits.
-//   - token:     Token.Secret is set, and BotIdentity is set explicitly
-//     (no auto-derivation available; the default github-actions[bot] is
-//     wrong when a PAT belongs to a real user).
-//
-// release.auth.mode is required: an empty mode is rejected with guidance
-// directing users at github_app or token. The legacy default_token mode
-// (using secrets.GITHUB_TOKEN) was removed because PRs it created could
-// not trigger required CI checks, leaving release PRs unmergeable; it is
-// rejected here with a specific migration error.
+// release.auth.mode is required: an empty mode is rejected with
+// guidance. Two removed legacy modes get specific migration errors:
+// default_token (removed because PRs created with the built-in
+// GITHUB_TOKEN cannot trigger required CI checks) and token (removed in
+// v0.14.0 because PAT-created API commits can never be signed by
+// GitHub; releaser now commits as the App in CI and as the invoking
+// user locally).
 func (r Release) ValidateAuth() error {
 	switch r.Auth.Mode {
 	case "":
-		return fmt.Errorf("release.auth.mode is required (expected github_app or token)")
+		return fmt.Errorf("release.auth.mode is required (expected github_app)")
 	case "default_token":
-		return fmt.Errorf("release.auth.mode=default_token is no longer supported (the built-in GITHUB_TOKEN cannot trigger downstream workflow runs, so required CI checks never run on the release PR); use mode=github_app or mode=token instead")
+		return fmt.Errorf("release.auth.mode=default_token is no longer supported (the built-in GITHUB_TOKEN cannot trigger downstream workflow runs, so required CI checks never run on the release PR); use mode=github_app instead")
+	case "token":
+		return fmt.Errorf("release.auth.mode=token was removed in v0.14.0 (GitHub never signs PAT-created API commits, so signed-commit branch protection would reject the release PR); use mode=github_app — in CI releaser commits as the App, locally it commits with your own git identity (release.bot_identity is gone too; delete it along with release.auth.token)")
 	case AuthModeGitHubApp:
 		if r.Auth.App == nil {
 			return fmt.Errorf("release.auth.mode=github_app requires release.auth.app")
@@ -225,28 +185,8 @@ func (r Release) ValidateAuth() error {
 		if len(missing) > 0 {
 			return fmt.Errorf("release.auth.app missing field(s): %s", strings.Join(missing, ", "))
 		}
-		if r.Auth.Token != nil {
-			return fmt.Errorf("release.auth.token must be unset when mode=github_app")
-		}
-		// BotIdentity must be left at defaults so the runtime
-		// auto-derivation owns the value.
-		d := DefaultRelease()
-		if r.BotIdentity != d.BotIdentity {
-			return fmt.Errorf("release.bot_identity must not be set when auth.mode=github_app (the App identity is auto-derived at runtime)")
-		}
-	case AuthModeToken:
-		if r.Auth.Token == nil || r.Auth.Token.Secret == "" {
-			return fmt.Errorf("release.auth.mode=token requires release.auth.token.secret")
-		}
-		if r.Auth.App != nil {
-			return fmt.Errorf("release.auth.app must be unset when mode=token")
-		}
-		d := DefaultRelease()
-		if r.BotIdentity == d.BotIdentity {
-			return fmt.Errorf("release.bot_identity must be set explicitly when auth.mode=token (the default github-actions[bot] does not match a PAT-backed user)")
-		}
 	default:
-		return fmt.Errorf("release.auth.mode=%q is not a valid mode (expected github_app or token)", r.Auth.Mode)
+		return fmt.Errorf("release.auth.mode=%q is not a valid mode (expected github_app)", r.Auth.Mode)
 	}
 	return nil
 }

@@ -96,7 +96,7 @@ func TestInit_NoFromNoTTY_ReturnsGuidanceError(t *testing.T) {
 }
 
 // init must reject a preset whose release.auth block is inconsistent
-// (e.g. mode=token without a token secret), and must not leave a
+// (e.g. mode=github_app without the app block), and must not leave a
 // partial file behind.
 func TestInit_RejectsPresetWithInvalidAuth(t *testing.T) {
 	repo := t.TempDir()
@@ -113,15 +113,52 @@ func TestInit_RejectsPresetWithInvalidAuth(t *testing.T) {
         regex: '^VERSION := (.*)$'
 release:
   auth:
-    mode: token
+    mode: github_app
 `)
 
 	r := runCLI(t, "init", "--from", preset, "--repo-root", repo)
 	if r.err == nil {
-		t.Fatal("expected init to fail when auth.mode=token has no token secret")
+		t.Fatal("expected init to fail when auth.mode=github_app has no app block")
 	}
 	if !strings.Contains(r.err.Error(), "release.auth") {
 		t.Errorf("error should mention release.auth; got: %v", r.err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, config.DefaultFilePath)); !os.IsNotExist(err) {
+		t.Errorf("config file was written despite auth validation failure: %v", err)
+	}
+}
+
+// init must reject a preset whose release.auth.mode is the removed
+// token mode, with the v0.14.0 migration error.
+func TestInit_RejectsPresetWithTokenAuthMode(t *testing.T) {
+	repo := t.TempDir()
+	preset := filepath.Join(repo, "preset.yaml")
+	writeFile(t, preset, `adapter:
+  type: generic
+  build:
+    command: make build
+    artifacts:
+      - dist/*
+  version:
+    locations:
+      - path: Makefile
+        regex: '^VERSION := (.*)$'
+release:
+  auth:
+    mode: token
+    token:
+      secret: RELEASER_GH_TOKEN
+  bot_identity:
+    name: myorg-releaser[bot]
+    email: 12345+myorg-releaser[bot]@users.noreply.github.com
+`)
+
+	r := runCLI(t, "init", "--from", preset, "--repo-root", repo)
+	if r.err == nil {
+		t.Fatal("expected init to fail for the removed token mode")
+	}
+	if !strings.Contains(r.err.Error(), "removed in v0.14.0") {
+		t.Errorf("error should mention the token-mode migration; got: %v", r.err)
 	}
 	if _, err := os.Stat(filepath.Join(repo, config.DefaultFilePath)); !os.IsNotExist(err) {
 		t.Errorf("config file was written despite auth validation failure: %v", err)
@@ -173,8 +210,7 @@ release:
 }
 
 // init must reject a preset whose release.auth.mode is the removed
-// default_token, with an error directing the user to one of the
-// remaining two modes.
+// default_token, with an error directing the user at github_app.
 func TestInit_RejectsPresetWithDefaultTokenAuthMode(t *testing.T) {
 	repo := t.TempDir()
 	preset := filepath.Join(repo, "preset.yaml")

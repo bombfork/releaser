@@ -21,24 +21,16 @@ inputs:
       GitHub App ID. Pair with `app-installation-id` and `app-private-key`
       to authenticate as a GitHub App installation. The App must be
       installed on the target repository with contents:write and
-      pull-requests:write permissions. Mutually exclusive with `token`.
-    required: false
-    default: ''
+      pull-requests:write permissions. App auth is required: commits
+      created with the installation token are attributed to the App bot
+      and signed by GitHub.
+    required: true
   app-installation-id:
     description: GitHub App installation ID for the target repository.
-    required: false
-    default: ''
+    required: true
   app-private-key:
     description: GitHub App private key in PEM format. Pass via a secret.
-    required: false
-    default: ''
-  token:
-    description: |
-      GitHub API token. Pass `github.token`, a PAT, or any other
-      installation/access token. Mutually exclusive with the `app-*`
-      inputs.
-    required: false
-    default: ''
+    required: true
   working-directory:
     description: Directory in which to run the releaser command.
     required: false
@@ -53,29 +45,13 @@ runs:
         APP_ID: ${{ inputs.app-id }}
         APP_INST_ID: ${{ inputs.app-installation-id }}
         APP_PEM: ${{ inputs.app-private-key }}
-        TOKEN: ${{ inputs.token }}
       run: |
         set -euo pipefail
-        app_any=false
-        if [[ -n "${APP_ID}" || -n "${APP_INST_ID}" || -n "${APP_PEM}" ]]; then
-          app_any=true
-        fi
-        token_set=false
-        if [[ -n "${TOKEN}" ]]; then
-          token_set=true
-        fi
-        if [[ "${app_any}" == "true" && "${token_set}" == "true" ]]; then
-          echo "::error::releaser: pass either the app-* inputs or token, not both" >&2
-          exit 1
-        fi
-        if [[ "${app_any}" == "true" ]]; then
-          if [[ -z "${APP_ID}" || -z "${APP_INST_ID}" || -z "${APP_PEM}" ]]; then
-            echo "::error::releaser: when using GitHub App auth, all of app-id, app-installation-id, and app-private-key must be set" >&2
-            exit 1
-          fi
-        fi
-        if [[ "${app_any}" == "false" && "${token_set}" == "false" ]]; then
-          echo "::error::releaser: no authentication provided. Pass either app-id/app-installation-id/app-private-key, or token (e.g. \${{ github.token }})" >&2
+        # `required: true` on the inputs does not fail the run when a
+        # caller passes an empty expression (e.g. an unset var/secret),
+        # so enforce non-empty values here.
+        if [[ -z "${APP_ID}" || -z "${APP_INST_ID}" || -z "${APP_PEM}" ]]; then
+          echo "::error::releaser: all of app-id, app-installation-id, and app-private-key must be set (GitHub App auth is required; token auth was removed in v0.14.0)" >&2
           exit 1
         fi
 
@@ -154,18 +130,17 @@ runs:
         GH_TKN_APP_ID: ${{ inputs.app-id }}
         GH_TKN_APP_INST_ID: ${{ inputs.app-installation-id }}
         GH_TKN_APP_PRIVATE_KEY: ${{ inputs.app-private-key }}
-        GH_TKN: ${{ inputs.token }}
         RELEASER_BIN: ${{ runner.tool_cache }}/releaser/${{ steps.version.outputs.version }}/releaser
         RELEASER_ARGS: ${{ inputs.command }}
       run: |
         set -euo pipefail
         # Drop empty auth env vars before invoking the binary. GitHub Actions
         # materializes every `env:` mapping even when the source input is unset,
-        # so all four GH_TKN_* vars are always present here. gh-token-go uses
+        # so the GH_TKN_APP_* vars are always present here. gh-token-go uses
         # os.LookupEnv (which sees "" as set) and prefers the App branch when
         # any of GH_TKN_APP_* are set — an empty value would then be parsed as
-        # an int and fail. Unsetting empties forces the intended branch.
-        for var in GH_TKN_APP_ID GH_TKN_APP_INST_ID GH_TKN_APP_PRIVATE_KEY GH_TKN; do
+        # an int and fail. Unsetting empties surfaces the real problem instead.
+        for var in GH_TKN_APP_ID GH_TKN_APP_INST_ID GH_TKN_APP_PRIVATE_KEY; do
           if [[ -z "${!var:-}" ]]; then
             unset "${var}"
           fi
