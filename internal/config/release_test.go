@@ -14,12 +14,6 @@ func TestDefaultRelease(t *testing.T) {
 	if d.DefaultBranch != "main" {
 		t.Errorf("DefaultBranch = %q", d.DefaultBranch)
 	}
-	if d.BotIdentity.Name != "github-actions[bot]" {
-		t.Errorf("BotIdentity.Name = %q", d.BotIdentity.Name)
-	}
-	if d.BotIdentity.Email != "41898282+github-actions[bot]@users.noreply.github.com" {
-		t.Errorf("BotIdentity.Email = %q", d.BotIdentity.Email)
-	}
 }
 
 func TestRelease_WithDefaults(t *testing.T) {
@@ -31,30 +25,12 @@ func TestRelease_WithDefaults(t *testing.T) {
 	}
 
 	// User overrides win.
-	got = config.Release{
-		BranchName: "release/next",
-		BotIdentity: config.BotIdentity{
-			Name:  "myorg-releaser[bot]",
-			Email: "12345+myorg-releaser[bot]@users.noreply.github.com",
-		},
-	}.WithDefaults()
+	got = config.Release{BranchName: "release/next"}.WithDefaults()
 	if got.BranchName != "release/next" {
 		t.Errorf("BranchName = %q, want override preserved", got.BranchName)
 	}
-	if got.BotIdentity.Name != "myorg-releaser[bot]" {
-		t.Errorf("Name = %q, want override preserved", got.BotIdentity.Name)
-	}
-
-	// Partial overrides only fill in missing fields.
-	got = config.Release{BranchName: "release/next"}.WithDefaults()
-	if got.BranchName != "release/next" {
-		t.Errorf("BranchName = %q", got.BranchName)
-	}
 	if got.DefaultBranch != "main" {
 		t.Errorf("DefaultBranch = %q, want default", got.DefaultBranch)
-	}
-	if got.BotIdentity.Name != "github-actions[bot]" {
-		t.Errorf("BotIdentity.Name = %q, want default", got.BotIdentity.Name)
 	}
 
 	// DefaultBranch override.

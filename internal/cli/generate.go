@@ -124,6 +124,13 @@ func runGenerate(repoRoot, actionRef, actionVersion string) error {
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	// The workflow template emits the App credential lookups
+	// unconditionally, so an invalid auth block would render a broken
+	// workflow (empty vars.* names). Reject it here with the migration
+	// guidance instead.
+	if err := cfg.Release.WithDefaults().ValidateAuth(); err != nil {
+		return err
+	}
 
 	registry := adapters.DefaultRegistry()
 	ad, ok := registry.ByName(cfg.Adapter.Type)

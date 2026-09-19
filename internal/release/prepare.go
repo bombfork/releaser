@@ -17,35 +17,30 @@ import (
 
 // PrepareInputs is the bundle of collaborators Prepare needs.
 type PrepareInputs struct {
-	Config        config.Config
-	Adapter       adapter.Adapter
-	GitHubClient  *github.Client
-	TokenProvider github.TokenProvider
+	Config       config.Config
+	Adapter      adapter.Adapter
+	GitHubClient *github.Client
+
+	// Committer creates the release-prep commit. The CLI wires the
+	// domain-appropriate strategy: APICommitter in CI, GitCommitter
+	// locally.
+	Committer Committer
 
 	// RemoteURL overrides the URL used by the read-only fetch of
 	// origin. When empty, defaults to the standard GitHub HTTPS URL for
 	// the detected owner/repo. Tests inject a local bare-repo path here
-	// so the fetch transport never touches the network. Commits are
-	// pushed via the GitHub Git Data API, not via this URL.
+	// so the fetch transport never touches the network.
 	RemoteURL string
 
-	// Auth overrides the auth method used by the read-only fetch of
-	// origin. When nil, defaults to TokenAuth(TokenProvider.GetToken()).
-	// Tests that inject a local RemoteURL set this to nil explicitly
-	// (no auth needed for a file path).
+	// Auth is the auth method used by the read-only fetch of origin.
+	// Tests that inject a local RemoteURL leave it nil (no auth needed
+	// for a file path).
 	Auth transport.AuthMethod
-
-	// Force is retained for backward compatibility with the workflow
-	// invocation surface; the API-based commit path doesn't touch the
-	// worktree, so worktree-cleanliness no longer matters. Reading this
-	// field has no effect.
-	Force bool
 
 	// DryRun runs the read-only steps (Fetch, GetRepo, BuildPlan,
 	// GetPRByHead) and prints a description of what the real run would
 	// do, but performs no version-file rewrites, commits, pushes, or
-	// PR operations. Safety-check failures become warnings rather than
-	// errors in this mode.
+	// PR operations.
 	DryRun bool
 
 	// Stdout receives progress lines from each phase of the real run
@@ -65,24 +60,19 @@ type PrepareInputs struct {
 // the GitHub API, not assumed `main`), applies the version-file bump
 // in memory against origin/<default>, creates the release-prep commit
 // on a side branch (cfg.Release.WithDefaults().BranchName, default
-// "releaser/pending-release") via the GitHub Git Data API — so the
-// commit is signed by GitHub's web-flow key — and opens or updates the
-// matching pull request.
+// "releaser/pending-release") through in.Committer, and opens or
+// updates the matching pull request. How the commit is created — and
+// whose identity it carries — is the Committer's concern: the GitHub
+// API signed-as-App-bot path in CI, the user's own git locally.
 //
-// Identity, token, and target repository are resolved as follows:
-//
-//   - Owner/repo: GITHUB_REPOSITORY env var when set, else parsed from
-//     the local origin remote URL.
-//   - Author/committer: cfg.Release.BotIdentity in CI mode
-//     (GITHUB_ACTIONS=true), the local git user.* config otherwise.
-//   - Token: in.TokenProvider.GetToken(); used by the read-only fetch
-//     of origin and propagated to the GitHub API via in.GitHubClient.
+// Owner/repo come from the GITHUB_REPOSITORY env var when set, else
+// are parsed from the local origin remote URL.
 //
 // Prepare is idempotent: a re-run on the same default-branch HEAD
 // regenerates equivalent state and updates the open PR with the same
 // content. Returning nil with no side effects is the correct outcome
 // when no commits since the latest release warrant a version bump.
-// The local worktree is never modified.
+// The local checkout is never modified.
 func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr error) {
 	out := in.Stdout
 	if out == nil {
@@ -103,11 +93,6 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 	report.Repo = owner + "/" + repoName
 	logf(out, "Repository: %s\n", report.Repo)
 
-	identity, err := ResolveIdentity(repoRoot, in.Config)
-	if err != nil {
-		return fmt.Errorf("resolve identity: %w", err)
-	}
-
 	ghRepo, err := in.GitHubClient.GetRepo(ctx, owner, repoName)
 	if err != nil {
 		return fmt.Errorf("look up repository: %w", err)
@@ -121,17 +106,8 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 	if remoteURL == "" {
 		remoteURL = GitHubHTTPSURL(owner, repoName)
 	}
-	auth := in.Auth
-	if auth == nil && in.RemoteURL == "" {
-		// Production path: resolve a token and use HTTPS basic auth.
-		token, err := in.TokenProvider.GetToken()
-		if err != nil {
-			return fmt.Errorf("resolve token: %w", err)
-		}
-		auth = TokenAuth(token)
-	}
 
-	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
+	if err := Fetch(repoRoot, remoteURL, in.Auth); err != nil {
 		return fmt.Errorf("fetch origin: %w", err)
 	}
 	logln(out, "Fetched origin")
@@ -188,7 +164,7 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 			report.Outcome = "would-update"
 			report.PRNumber = existing.Number
 		}
-		return describePreparePlan(out, in, plan, defaultBranch, branchName, identity, commitMsg, title, body, report)
+		return describePreparePlan(out, in, plan, defaultBranch, branchName, commitMsg, title, body, report)
 	}
 
 	parentSHA, err := ResolveLocalRef(repoRoot, originDefaultRef)
@@ -204,14 +180,18 @@ func Prepare(ctx context.Context, repoRoot string, in PrepareInputs) (retErr err
 	} else {
 		logf(out, "No version files configured; will create an empty commit for %s (library mode)\n", plan.NextVersion)
 	}
-	newSHA, err := in.GitHubClient.CreateSignedCommit(
-		ctx, owner, repoName, branchName, parentSHA, files,
-		commitMsg, identity.Name, identity.Email,
-	)
+	newSHA, err := in.Committer.Commit(ctx, CommitInput{
+		Owner:     owner,
+		Repo:      repoName,
+		Branch:    branchName,
+		ParentSHA: parentSHA,
+		Files:     files,
+		Message:   commitMsg,
+	})
 	if err != nil {
-		return fmt.Errorf("create signed commit: %w", err)
+		return fmt.Errorf("create commit: %w", err)
 	}
-	logf(out, "Created signed commit %s on %s (parent %s)\n", newSHA, branchName, parentSHA)
+	logf(out, "Created commit %s on %s (parent %s)\n", newSHA, branchName, parentSHA)
 
 	existing, err := in.GitHubClient.GetPRByHead(ctx, owner, repoName, branchName)
 	if errors.Is(err, github.ErrNotFound) {
@@ -274,7 +254,7 @@ func containsReleasePrepareCommit(commits []ParsedCommit) bool {
 // human-readable description. Output is accumulated in a buffer and
 // written to out in a single Write so a transient stdout error doesn't
 // leave a half-printed plan.
-func describePreparePlan(out io.Writer, in PrepareInputs, plan *Plan, defaultBranch, branchName string, identity Identity, commitMsg, title, body string, report *prepareReport) error {
+func describePreparePlan(out io.Writer, in PrepareInputs, plan *Plan, defaultBranch, branchName string, commitMsg, title, body string, report *prepareReport) error {
 	var buf bytes.Buffer
 	fmt.Fprintln(&buf, plan.String())
 	fmt.Fprintln(&buf, "Prepare actions (dry run)")
@@ -283,8 +263,8 @@ func describePreparePlan(out io.Writer, in PrepareInputs, plan *Plan, defaultBra
 	for _, loc := range in.Config.Adapter.Version.Locations {
 		fmt.Fprintf(&buf, "  - %s  (regex: %s)\n", loc.Path, loc.Regex)
 	}
-	fmt.Fprintf(&buf, "Would create signed commit on %q via GitHub API (parent: origin/%s) as %s <%s>: %q\n",
-		branchName, defaultBranch, identity.Name, identity.Email, commitMsg)
+	fmt.Fprintf(&buf, "Would create commit on %q (parent: origin/%s) %s: %q\n",
+		branchName, defaultBranch, in.Committer.Describe(), commitMsg)
 
 	switch report.Outcome {
 	case "would-create":

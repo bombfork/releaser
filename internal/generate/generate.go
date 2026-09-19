@@ -56,15 +56,11 @@ func GenerateFiles(in Inputs) (map[string][]byte, error) {
 		DefaultBranch: rel.DefaultBranch,
 		BranchName:    rel.BranchName,
 		SetupSteps:    snippets.SetupSteps,
-		AuthMode:      string(rel.Auth.Mode),
 	}
 	if rel.Auth.App != nil {
 		data.AuthAppIDVar = rel.Auth.App.AppIDVar
 		data.AuthInstallationIDVar = rel.Auth.App.InstallationIDVar
 		data.AuthPrivateKeySecret = rel.Auth.App.PrivateKeySecret
-	}
-	if rel.Auth.Token != nil {
-		data.AuthTokenSecret = rel.Auth.Token.Secret
 	}
 	body, err := render("release.yml.tmpl", data)
 	if err != nil {
@@ -101,11 +97,9 @@ type templateData struct {
 	DefaultBranch         string
 	BranchName            string
 	SetupSteps            []string
-	AuthMode              string
 	AuthAppIDVar          string
 	AuthInstallationIDVar string
 	AuthPrivateKeySecret  string
-	AuthTokenSecret       string
 }
 
 // render reads the named template, executes it with data, and returns

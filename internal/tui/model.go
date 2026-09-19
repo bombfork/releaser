@@ -61,35 +61,13 @@ const (
 	targetContinue
 )
 
-// Sub-steps within stepAuth.
-const (
-	authPickMode = iota
-	authAppFields
-	authTokenFields
-)
-
-// Index of each mode in the authPickMode list. GitHub App is preferred
-// (auto-derived bot identity, workflows:write scope, downstream workflow
-// runs trigger normally) and pre-selected.
-const (
-	authModeIdxApp = iota
-	authModeIdxToken
-)
-
-var authModeChoices = []string{
-	"GitHub App",
-	"API token (PAT or installation token)",
-}
-
-// Three name inputs for github_app mode + cursor wraparound.
+// Three name inputs for the GitHub App credentials + cursor wraparound.
+// GitHub App is the only auth mode: CI commits are created via the API
+// with the App installation token (signed as the App bot), local runs
+// commit with the user's own git identity.
 const authAppFieldCount = 3
 
-// One secret + bot name + bot email = 3 inputs for token mode.
-const authTokenFieldCount = 3
-
-// Advanced step covers workflow file + release/default branches. Bot
-// identity moved into stepAuth (token mode) or is auto-derived
-// (github_app).
+// Advanced step covers workflow file + release/default branches.
 const advancedFieldCount = 3
 
 // Common GOOS / GOARCH values offered by the targets picker. Users with
@@ -150,15 +128,10 @@ type Model struct {
 	advFocus         int
 
 	// Auth step.
-	authSubstep       int
-	authModeIdx       int
 	authFieldFocus    int
 	authAppIDVar      textinput.Model
 	authInstIDVar     textinput.Model
 	authPrivKeySecret textinput.Model
-	authTokenSecret   textinput.Model
-	authBotName       textinput.Model
-	authBotEmail      textinput.Model
 
 	preview     viewport.Model
 	previewYAML string
@@ -209,9 +182,6 @@ func NewModel(repoRoot string, registry *adapter.Registry) Model {
 	m.authAppIDVar = newInputWith(config.DefaultAuthAppIDVar)
 	m.authInstIDVar = newInputWith(config.DefaultAuthInstallationIDVar)
 	m.authPrivKeySecret = newInputWith(config.DefaultAuthPrivateKeySecret)
-	m.authTokenSecret = newInputWith(config.DefaultAuthTokenSecret)
-	m.authBotName = newInput("e.g. myorg-releaser[bot]")
-	m.authBotEmail = newInput("e.g. 12345+myorg-releaser[bot]@users.noreply.github.com")
 
 	m.preview = viewport.New(78, 18)
 	m.bootstrapCustomInput = newInput("semver, e.g. 0.1.0")
@@ -291,28 +261,16 @@ func (m Model) Config() config.Config {
 		cfg.Release.DefaultBranch = strings.TrimSpace(m.advDefaultBranch.Value())
 	}
 
-	// Auth — populated only when the user has reached at least the
-	// pick-mode substep (i.e. the version step has been confirmed).
+	// Auth — populated only once the user has reached the auth step
+	// (i.e. the version step has been confirmed).
 	if m.step >= stepAuth {
-		switch m.authModeIdx {
-		case authModeIdxApp:
-			cfg.Release.Auth = config.Auth{
-				Mode: config.AuthModeGitHubApp,
-				App: &config.AuthApp{
-					AppIDVar:          strings.TrimSpace(m.authAppIDVar.Value()),
-					InstallationIDVar: strings.TrimSpace(m.authInstIDVar.Value()),
-					PrivateKeySecret:  strings.TrimSpace(m.authPrivKeySecret.Value()),
-				},
-			}
-		case authModeIdxToken:
-			cfg.Release.Auth = config.Auth{
-				Mode:  config.AuthModeToken,
-				Token: &config.AuthToken{Secret: strings.TrimSpace(m.authTokenSecret.Value())},
-			}
-			cfg.Release.BotIdentity = config.BotIdentity{
-				Name:  strings.TrimSpace(m.authBotName.Value()),
-				Email: strings.TrimSpace(m.authBotEmail.Value()),
-			}
+		cfg.Release.Auth = config.Auth{
+			Mode: config.AuthModeGitHubApp,
+			App: &config.AuthApp{
+				AppIDVar:          strings.TrimSpace(m.authAppIDVar.Value()),
+				InstallationIDVar: strings.TrimSpace(m.authInstIDVar.Value()),
+				PrivateKeySecret:  strings.TrimSpace(m.authPrivKeySecret.Value()),
+			},
 		}
 	}
 
@@ -593,9 +551,9 @@ func (m Model) updateVersionLocations(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.verPath.Blur()
 			m.verRegex.Blur()
 			m.step = stepAuth
-			m.authSubstep = authPickMode
-			m.authModeIdx = authModeIdxApp
-			return m, nil
+			m.authFieldFocus = 0
+			m.focusAuthField()
+			return m, textinput.Blink
 		}
 	}
 	var cmd tea.Cmd
@@ -627,120 +585,48 @@ func (m *Model) toggleVersionFocus() {
 	}
 }
 
-// updateAuth drives the three-substep auth flow: pick mode, then the
-// mode-specific follow-up screen, then advance to stepAdvancedPrompt.
+// updateAuth drives the GitHub App credential-name inputs, then
+// advances to stepAdvancedPrompt.
 func (m Model) updateAuth(msg tea.Msg) (tea.Model, tea.Cmd) {
-	key, isKey := msg.(tea.KeyMsg)
-	switch m.authSubstep {
-	case authPickMode:
-		if !isKey {
-			return m, nil
-		}
+	if key, isKey := msg.(tea.KeyMsg); isKey {
 		switch key.Type {
-		case tea.KeyUp:
-			if m.authModeIdx > 0 {
-				m.authModeIdx--
-			}
-		case tea.KeyDown:
-			if m.authModeIdx < len(authModeChoices)-1 {
-				m.authModeIdx++
-			}
+		case tea.KeyTab, tea.KeyDown:
+			m.cycleAuthAppFocus(1)
+			return m, textinput.Blink
+		case tea.KeyShiftTab, tea.KeyUp:
+			m.cycleAuthAppFocus(-1)
+			return m, textinput.Blink
 		case tea.KeyEnter:
-			m.err = ""
-			switch m.authModeIdx {
-			case authModeIdxApp:
-				m.authSubstep = authAppFields
-				m.authFieldFocus = 0
-				m.focusAuthField()
-				return m, textinput.Blink
-			case authModeIdxToken:
-				m.authSubstep = authTokenFields
-				m.authFieldFocus = 0
-				m.focusAuthField()
-				return m, textinput.Blink
-			}
-		}
-		return m, nil
-
-	case authAppFields:
-		if isKey {
-			switch key.Type {
-			case tea.KeyTab, tea.KeyDown:
-				m.cycleAuthAppFocus(1)
-				return m, textinput.Blink
-			case tea.KeyShiftTab, tea.KeyUp:
-				m.cycleAuthAppFocus(-1)
-				return m, textinput.Blink
-			case tea.KeyEnter:
-				if m.authFieldFocus == authAppFieldCount-1 {
-					if err := m.validateAuthAppInputs(); err != nil {
-						m.err = err.Error()
-						return m, nil
-					}
-					m.err = ""
-					m.blurAllAuthInputs()
-					m.step = stepAdvancedPrompt
-					m.advancedChoiceIdx = 1
+			if m.authFieldFocus == authAppFieldCount-1 {
+				if err := m.validateAuthAppInputs(); err != nil {
+					m.err = err.Error()
 					return m, nil
 				}
-				m.cycleAuthAppFocus(1)
-				return m, textinput.Blink
+				m.err = ""
+				m.blurAllAuthInputs()
+				m.step = stepAdvancedPrompt
+				m.advancedChoiceIdx = 1
+				return m, nil
 			}
+			m.cycleAuthAppFocus(1)
+			return m, textinput.Blink
 		}
-		var cmd tea.Cmd
-		switch m.authFieldFocus {
-		case 0:
-			m.authAppIDVar, cmd = m.authAppIDVar.Update(msg)
-		case 1:
-			m.authInstIDVar, cmd = m.authInstIDVar.Update(msg)
-		case 2:
-			m.authPrivKeySecret, cmd = m.authPrivKeySecret.Update(msg)
-		}
-		return m, cmd
-
-	case authTokenFields:
-		if isKey {
-			switch key.Type {
-			case tea.KeyTab, tea.KeyDown:
-				m.cycleAuthTokenFocus(1)
-				return m, textinput.Blink
-			case tea.KeyShiftTab, tea.KeyUp:
-				m.cycleAuthTokenFocus(-1)
-				return m, textinput.Blink
-			case tea.KeyEnter:
-				if m.authFieldFocus == authTokenFieldCount-1 {
-					if err := m.validateAuthTokenInputs(); err != nil {
-						m.err = err.Error()
-						return m, nil
-					}
-					m.err = ""
-					m.blurAllAuthInputs()
-					m.step = stepAdvancedPrompt
-					m.advancedChoiceIdx = 1
-					return m, nil
-				}
-				m.cycleAuthTokenFocus(1)
-				return m, textinput.Blink
-			}
-		}
-		var cmd tea.Cmd
-		switch m.authFieldFocus {
-		case 0:
-			m.authTokenSecret, cmd = m.authTokenSecret.Update(msg)
-		case 1:
-			m.authBotName, cmd = m.authBotName.Update(msg)
-		case 2:
-			m.authBotEmail, cmd = m.authBotEmail.Update(msg)
-		}
-		return m, cmd
 	}
-	return m, nil
+	var cmd tea.Cmd
+	switch m.authFieldFocus {
+	case 0:
+		m.authAppIDVar, cmd = m.authAppIDVar.Update(msg)
+	case 1:
+		m.authInstIDVar, cmd = m.authInstIDVar.Update(msg)
+	case 2:
+		m.authPrivKeySecret, cmd = m.authPrivKeySecret.Update(msg)
+	}
+	return m, cmd
 }
 
 func (m *Model) blurAllAuthInputs() {
 	for _, ti := range []*textinput.Model{
 		&m.authAppIDVar, &m.authInstIDVar, &m.authPrivKeySecret,
-		&m.authTokenSecret, &m.authBotName, &m.authBotEmail,
 	} {
 		ti.Blur()
 	}
@@ -748,35 +634,18 @@ func (m *Model) blurAllAuthInputs() {
 
 func (m *Model) focusAuthField() {
 	m.blurAllAuthInputs()
-	switch m.authSubstep {
-	case authAppFields:
-		switch m.authFieldFocus {
-		case 0:
-			m.authAppIDVar.Focus()
-		case 1:
-			m.authInstIDVar.Focus()
-		case 2:
-			m.authPrivKeySecret.Focus()
-		}
-	case authTokenFields:
-		switch m.authFieldFocus {
-		case 0:
-			m.authTokenSecret.Focus()
-		case 1:
-			m.authBotName.Focus()
-		case 2:
-			m.authBotEmail.Focus()
-		}
+	switch m.authFieldFocus {
+	case 0:
+		m.authAppIDVar.Focus()
+	case 1:
+		m.authInstIDVar.Focus()
+	case 2:
+		m.authPrivKeySecret.Focus()
 	}
 }
 
 func (m *Model) cycleAuthAppFocus(delta int) {
 	m.authFieldFocus = (m.authFieldFocus + delta + authAppFieldCount) % authAppFieldCount
-	m.focusAuthField()
-}
-
-func (m *Model) cycleAuthTokenFocus(delta int) {
-	m.authFieldFocus = (m.authFieldFocus + delta + authTokenFieldCount) % authTokenFieldCount
 	m.focusAuthField()
 }
 
@@ -789,23 +658,6 @@ func (m Model) validateAuthAppInputs() error {
 	}
 	if strings.TrimSpace(m.authPrivKeySecret.Value()) == "" {
 		return errors.New("private key secret name is required")
-	}
-	return nil
-}
-
-func (m Model) validateAuthTokenInputs() error {
-	if strings.TrimSpace(m.authTokenSecret.Value()) == "" {
-		return errors.New("token secret name is required")
-	}
-	if strings.TrimSpace(m.authBotName.Value()) == "" {
-		return errors.New("bot identity name is required")
-	}
-	email := strings.TrimSpace(m.authBotEmail.Value())
-	if email == "" {
-		return errors.New("bot identity email is required")
-	}
-	if !strings.Contains(email, "@") {
-		return errors.New("bot identity email looks invalid (missing @)")
 	}
 	return nil
 }
@@ -1256,28 +1108,13 @@ func (m Model) viewAdvancedPrompt() string {
 
 func (m Model) viewAuth() string {
 	var b strings.Builder
-	b.WriteString(labelStyle.Render("Workflow authentication") + "\n")
-	switch m.authSubstep {
-	case authPickMode:
-		b.WriteString(helpStyle.Render("How will the release workflow authenticate against the GitHub API?") + "\n\n")
-		for i, label := range authModeChoices {
-			b.WriteString(renderChoice(label, i == m.authModeIdx))
-		}
-		b.WriteString("\n" + helpStyle.Render("↑/↓ select · enter confirm · esc abort"))
-	case authAppFields:
-		b.WriteString(helpStyle.Render("Name the workflow vars / secret that carry the GitHub App credentials.") + "\n")
-		b.WriteString(helpStyle.Render("Defaults shown are the conventional names — adjust if your workflow uses others.") + "\n\n")
-		b.WriteString(renderLabeled("App ID var (vars.*):           ", m.authAppIDVar, m.authFieldFocus == 0))
-		b.WriteString(renderLabeled("Installation ID var (vars.*):  ", m.authInstIDVar, m.authFieldFocus == 1))
-		b.WriteString(renderLabeled("Private key secret (secrets.*):", m.authPrivKeySecret, m.authFieldFocus == 2))
-		b.WriteString("\n" + helpStyle.Render("tab next · shift+tab prev · enter (on last field) continue · esc abort"))
-	case authTokenFields:
-		b.WriteString(helpStyle.Render("Token mode: name the secret holding the token, and the git identity to attribute commits to.") + "\n\n")
-		b.WriteString(renderLabeled("Token secret (secrets.*): ", m.authTokenSecret, m.authFieldFocus == 0))
-		b.WriteString(renderLabeled("Bot name:                 ", m.authBotName, m.authFieldFocus == 1))
-		b.WriteString(renderLabeled("Bot email:                ", m.authBotEmail, m.authFieldFocus == 2))
-		b.WriteString("\n" + helpStyle.Render("tab next · shift+tab prev · enter (on last field) continue · esc abort"))
-	}
+	b.WriteString(labelStyle.Render("Workflow authentication (GitHub App)") + "\n")
+	b.WriteString(helpStyle.Render("Name the workflow vars / secret that carry the GitHub App credentials.") + "\n")
+	b.WriteString(helpStyle.Render("Defaults shown are the conventional names — adjust if your workflow uses others.") + "\n\n")
+	b.WriteString(renderLabeled("App ID var (vars.*):           ", m.authAppIDVar, m.authFieldFocus == 0))
+	b.WriteString(renderLabeled("Installation ID var (vars.*):  ", m.authInstIDVar, m.authFieldFocus == 1))
+	b.WriteString(renderLabeled("Private key secret (secrets.*):", m.authPrivKeySecret, m.authFieldFocus == 2))
+	b.WriteString("\n" + helpStyle.Render("tab next · shift+tab prev · enter (on last field) continue · esc abort"))
 	return b.String()
 }
 

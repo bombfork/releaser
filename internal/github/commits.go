@@ -6,50 +6,54 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	gh "github.com/google/go-github/v86/github"
 )
 
 // FileChange describes a single tree-entry addition or update destined
-// for a CreateSignedCommit call. Content is the raw file bytes (no
-// pre-encoding); the client base64-encodes for blob creation. Mode is
-// the git-style permission string: "100644" for regular files and
-// "100755" for executable files. Symlinks and submodules are out of
-// scope.
+// for a release-prep commit. Content is the raw file bytes (no
+// pre-encoding); the API committer base64-encodes for blob creation.
+// Mode is the git-style permission string: "100644" for regular files
+// and "100755" for executable files. Symlinks and submodules are out
+// of scope.
 type FileChange struct {
 	Path    string
 	Content []byte
 	Mode    string
 }
 
-// CreateSignedCommit creates a commit on owner/repo via the GitHub Git
-// Data API (blobs → tree → commit → ref) and points branch at the new
+// CreateCommit creates a commit on owner/repo via the GitHub Git Data
+// API (blobs → tree → commit → ref) and points branch at the new
 // commit. The branch is created if absent and force-updated if it
 // already exists.
 //
-// Commits created via this API are signed by GitHub's web-flow key
-// regardless of the token used to authenticate (PAT, App installation
-// token, or GITHUB_TOKEN); the project's release workflow relies on
-// that property to satisfy branch-protection rules that require signed
-// commits on the default branch.
+// Author and committer are deliberately omitted: GitHub then derives
+// both from the authenticated token, and — only for GitHub App
+// installation tokens — signs the commit with its own key, attributing
+// it to `app-slug[bot]` and marking it Verified. Supplying an explicit
+// author or committer suppresses that signing, and commits created
+// with a PAT are never signed by GitHub regardless. This behavior is
+// undocumented but load-bearing and empirically stable; see
+// https://github.com/orgs/community/discussions/50055. Releaser only
+// takes this path in CI, where the workflow supplies App credentials —
+// local runs commit through the git CLI instead.
 //
 // When files is empty (library mode: no in-tree version file
 // configured), the commit reuses the parent's tree directly — the API
-// equivalent of go-git's AllowEmptyCommits.
+// equivalent of an empty commit.
 //
 // Returns the new commit SHA.
-func (c *Client) CreateSignedCommit(
+func (c *Client) CreateCommit(
 	ctx context.Context,
 	owner, repo, branch, parentSHA string,
 	files []FileChange,
-	message, authorName, authorEmail string,
+	message string,
 ) (string, error) {
 	if branch == "" {
-		return "", errors.New("create signed commit: branch must be set")
+		return "", errors.New("create commit: branch must be set")
 	}
 	if parentSHA == "" {
-		return "", errors.New("create signed commit: parentSHA must be set")
+		return "", errors.New("create commit: parentSHA must be set")
 	}
 
 	parent, _, err := c.gh.Git.GetCommit(ctx, owner, repo, parentSHA)
@@ -93,18 +97,10 @@ func (c *Client) CreateSignedCommit(
 		}
 	}
 
-	now := time.Now()
-	sig := &gh.CommitAuthor{
-		Name:  gh.Ptr(authorName),
-		Email: gh.Ptr(authorEmail),
-		Date:  &gh.Timestamp{Time: now},
-	}
 	created, _, err := c.gh.Git.CreateCommit(ctx, owner, repo, gh.Commit{
-		Message:   gh.Ptr(message),
-		Tree:      &gh.Tree{SHA: gh.Ptr(treeSHA)},
-		Parents:   []*gh.Commit{{SHA: gh.Ptr(parentSHA)}},
-		Author:    sig,
-		Committer: sig,
+		Message: gh.Ptr(message),
+		Tree:    &gh.Tree{SHA: gh.Ptr(treeSHA)},
+		Parents: []*gh.Commit{{SHA: gh.Ptr(parentSHA)}},
 	}, nil)
 	if err != nil {
 		return "", fmt.Errorf("create commit: %w", err)

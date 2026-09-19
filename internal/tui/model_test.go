@@ -28,20 +28,14 @@ func press(t *testing.T, m Model, key tea.KeyType) Model {
 	return out.(Model)
 }
 
-// chooseGitHubAppAuth advances past stepAuth by picking the github_app
-// mode (the pre-selected first option) and accepting the default
-// var/secret names. Most existing tests are indifferent to which mode
-// is in use — they exercise downstream behavior — so github_app with
-// defaulted names keeps them concise.
+// chooseGitHubAppAuth advances past stepAuth by accepting the default
+// GitHub App var/secret names. Most existing tests are indifferent to
+// the auth details — they exercise downstream behavior — so the
+// defaulted names keep them concise.
 func chooseGitHubAppAuth(t *testing.T, m Model) Model {
 	t.Helper()
 	if m.step != stepAuth {
 		t.Fatalf("chooseGitHubAppAuth: step = %v, want stepAuth", m.step)
-	}
-	// authPickMode default is authModeIdxApp (idx 0). Enter to confirm.
-	m = press(t, m, tea.KeyEnter)
-	if m.authSubstep != authAppFields {
-		t.Fatalf("after auth pick: substep = %d, want authAppFields", m.authSubstep)
 	}
 	// Three Enters: first two advance focus through the three pre-filled
 	// fields, third confirms and moves to stepAdvancedPrompt.
@@ -555,13 +549,9 @@ func driveToAuth(t *testing.T) Model {
 
 func TestModel_AuthGitHubAppHappyPath(t *testing.T) {
 	m := driveToAuth(t)
-	// GitHub App (idx 0) is pre-selected; no navigation needed.
-	if m.authModeIdx != authModeIdxApp {
-		t.Fatalf("authModeIdx = %d, want App (pre-selected)", m.authModeIdx)
-	}
-	m = press(t, m, tea.KeyEnter)
-	if m.authSubstep != authAppFields {
-		t.Fatalf("substep = %d, want authAppFields", m.authSubstep)
+	// The auth step opens directly on the app credential fields.
+	if m.authFieldFocus != 0 {
+		t.Fatalf("authFieldFocus = %d, want 0", m.authFieldFocus)
 	}
 	// Three Enters: first two advance focus, third confirms.
 	m = press(t, m, tea.KeyEnter)
@@ -585,54 +575,36 @@ func TestModel_AuthGitHubAppHappyPath(t *testing.T) {
 	if cfg.Release.Auth.App.PrivateKeySecret != "RELEASER_APP_PRIVATE_KEY" {
 		t.Errorf("PrivateKeySecret = %q", cfg.Release.Auth.App.PrivateKeySecret)
 	}
-	if cfg.Release.Auth.Token != nil {
-		t.Errorf("Auth.Token = %+v, want nil", cfg.Release.Auth.Token)
-	}
 }
 
-func TestModel_AuthTokenRequiresBotIdentity(t *testing.T) {
+func TestModel_AuthRejectsEmptyAppField(t *testing.T) {
 	m := driveToAuth(t)
-	// Default idx is authModeIdxApp (0); Down once -> token (1).
-	m = press(t, m, tea.KeyDown)
-	if m.authModeIdx != authModeIdxToken {
-		t.Fatalf("authModeIdx = %d, want Token", m.authModeIdx)
-	}
-	m = press(t, m, tea.KeyEnter)
-	if m.authSubstep != authTokenFields {
-		t.Fatalf("substep = %d, want authTokenFields", m.authSubstep)
-	}
-	// Tab to the bot name field (index 1), clear it (it's empty already),
-	// tab to email, then press enter on the last field — should reject.
+	// Clear the pre-filled app id var, jump to the last field, and
+	// confirm — validation must reject and keep the user on stepAuth.
+	m.authAppIDVar.SetValue("")
 	m = press(t, m, tea.KeyTab)
 	m = press(t, m, tea.KeyTab)
 	if m.authFieldFocus != 2 {
-		t.Fatalf("focus = %d, want 2 (email)", m.authFieldFocus)
+		t.Fatalf("focus = %d, want 2 (private key secret)", m.authFieldFocus)
 	}
 	m = press(t, m, tea.KeyEnter)
 	if m.step != stepAuth {
-		t.Fatalf("step advanced despite missing bot identity: %v", m.step)
+		t.Fatalf("step advanced despite empty app id var: %v", m.step)
 	}
 	if m.err == "" {
-		t.Errorf("expected validation error for missing bot identity")
+		t.Errorf("expected validation error for empty app id var")
 	}
 
-	// Fill bot identity and retry.
-	m.authBotName.SetValue("myorg-releaser[bot]")
-	m.authBotEmail.SetValue("12345+myorg-releaser[bot]@users.noreply.github.com")
+	// Fill it back and retry.
+	m.authAppIDVar.SetValue("MY_APP_ID")
 	m = press(t, m, tea.KeyEnter)
 	if m.step != stepAdvancedPrompt {
 		t.Fatalf("after fill + enter: step = %v, want stepAdvancedPrompt", m.step)
 	}
 	m = press(t, m, tea.KeyEnter) // skip advanced
 	cfg := m.Config()
-	if cfg.Release.Auth.Mode != "token" {
-		t.Errorf("Mode = %q, want token", cfg.Release.Auth.Mode)
-	}
-	if cfg.Release.Auth.Token == nil || cfg.Release.Auth.Token.Secret != "RELEASER_GH_TOKEN" {
-		t.Errorf("Auth.Token = %+v", cfg.Release.Auth.Token)
-	}
-	if cfg.Release.BotIdentity.Name != "myorg-releaser[bot]" {
-		t.Errorf("BotIdentity.Name = %q", cfg.Release.BotIdentity.Name)
+	if cfg.Release.Auth.App == nil || cfg.Release.Auth.App.AppIDVar != "MY_APP_ID" {
+		t.Errorf("Auth.App = %+v, want AppIDVar MY_APP_ID", cfg.Release.Auth.App)
 	}
 }
 

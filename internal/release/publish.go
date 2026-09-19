@@ -20,10 +20,9 @@ import (
 
 // PublishInputs is the bundle of collaborators Publish needs.
 type PublishInputs struct {
-	Config        config.Config
-	Adapter       adapter.Adapter
-	GitHubClient  *github.Client
-	TokenProvider github.TokenProvider
+	Config       config.Config
+	Adapter      adapter.Adapter
+	GitHubClient *github.Client
 
 	// Stdout and Stderr receive the configured build command's output.
 	// CLI callers pass cobra's Out/Err writers; tests pass io.Discard.
@@ -35,8 +34,8 @@ type PublishInputs struct {
 	// Tests inject a local bare-repo path here.
 	RemoteURL string
 
-	// Auth overrides the auth method used by Fetch. When nil and
-	// RemoteURL is empty, defaults to TokenAuth from TokenProvider.
+	// Auth is the auth method used by Fetch. Tests that inject a local
+	// RemoteURL leave it nil (no auth needed for a file path).
 	Auth transport.AuthMethod
 
 	// Force skips the worktree-clean and remote-sync safety checks.
@@ -100,15 +99,7 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) (retErr err
 	if remoteURL == "" {
 		remoteURL = GitHubHTTPSURL(owner, repoName)
 	}
-	auth := in.Auth
-	if auth == nil && in.RemoteURL == "" {
-		token, err := in.TokenProvider.GetToken()
-		if err != nil {
-			return fmt.Errorf("resolve token: %w", err)
-		}
-		auth = TokenAuth(token)
-	}
-	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
+	if err := Fetch(repoRoot, remoteURL, in.Auth); err != nil {
 		return fmt.Errorf("fetch origin: %w", err)
 	}
 	logln(out, "Fetched origin")
@@ -219,7 +210,7 @@ func Publish(ctx context.Context, repoRoot string, in PublishInputs) (retErr err
 	// Refetch so the locally-checked-out repo has it: build tools that
 	// inspect git state (e.g. goreleaser's tag validation) will then
 	// resolve the tag without needing a workaround in the build command.
-	if err := Fetch(repoRoot, remoteURL, auth); err != nil {
+	if err := Fetch(repoRoot, remoteURL, in.Auth); err != nil {
 		return fmt.Errorf("fetch tags after ensuring release: %w", err)
 	}
 

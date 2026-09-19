@@ -69,7 +69,7 @@ func initBootstrapFixture(t *testing.T) (upstream, local string) {
 
 // bootstrapCounters tracks how many times each endpoint is hit and
 // captures the Git Data API request bodies so tests can assert on the
-// blob set, tree entries, and commit identity Bootstrap produces.
+// blob set, tree entries, and commit Bootstrap produces.
 type bootstrapCounters struct {
 	getRepo  atomic.Int32
 	prList   atomic.Int32
@@ -241,11 +241,10 @@ func TestBootstrap_HappyPathCreatesBranchWorkflowsCommitAndPR(t *testing.T) {
 
 	httpClient, counters := buildBootstrapMock(t)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	var stdout bytes.Buffer
 	if err := release.Bootstrap(context.Background(), local, release.BootstrapInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		FirstVersion: "0.1.0", ActionRef: "main", ActionVersion: "main",
 		RemoteURL: upstream, Stdout: &stdout,
 	}); err != nil {
@@ -293,6 +292,15 @@ func TestBootstrap_HappyPathCreatesBranchWorkflowsCommitAndPR(t *testing.T) {
 		t.Errorf("commit subject = %q, want 'chore(release): prepare v0.1.0'", got)
 	}
 
+	// Author/committer must be omitted so GitHub attributes the commit
+	// to the App bot and signs it (explicit identity suppresses that).
+	if counters.commit.Author != nil {
+		t.Errorf("author = %+v, want omitted", counters.commit.Author)
+	}
+	if counters.commit.Committer != nil {
+		t.Errorf("committer = %+v, want omitted", counters.commit.Committer)
+	}
+
 	// The bare upstream is not pushed to anymore — all writes go via API.
 	out, err := exec.Command("git", "-C", upstream, "branch", "--list", "releaser/pending-release").CombinedOutput()
 	if err != nil {
@@ -307,7 +315,7 @@ func TestBootstrap_HappyPathCreatesBranchWorkflowsCommitAndPR(t *testing.T) {
 		"Repository: bombfork/releaser-test",
 		"Default branch: main",
 		"Rendered 1 workflow file",
-		"Created signed commit new-commit-sha on releaser/pending-release",
+		"Created commit new-commit-sha on releaser/pending-release",
 		"Created PR #7",
 	} {
 		if !strings.Contains(stdout.String(), want) {
@@ -322,70 +330,6 @@ func keysOfStrMap(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
-}
-
-// When the scope probe reports an OAuth token that lacks the workflow
-// scope, Bootstrap returns *MissingScopeError before doing anything
-// destructive (no fetch, no commit, no push).
-func TestBootstrap_FailsFastWhenTokenLacksWorkflowScope(t *testing.T) {
-	t.Setenv("GITHUB_ACTIONS", "true")
-	t.Setenv("GITHUB_REPOSITORY", "bombfork/releaser-test")
-
-	upstream, local := initBootstrapFixture(t)
-
-	cfg := config.Config{
-		Adapter: config.Adapter{
-			Type:  "generic",
-			Build: config.Build{Command: "true", Artifacts: []string{"dist/*"}},
-			Version: config.Version{Locations: []config.VersionLocation{
-				{Path: "Makefile", Regex: `^VERSION := (.*)$`},
-			}},
-		},
-	}
-
-	httpClient := mock.NewMockedHTTPClient(
-		mock.WithRequestMatchHandler(
-			mock.GetRateLimit,
-			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("X-OAuth-Scopes", "repo, read:org") // no `workflow`
-				_, _ = w.Write([]byte(`{"rate":{"limit":5000,"remaining":4999}}`))
-			}),
-		),
-		mock.WithRequestMatchHandler(
-			mock.GetReposByOwnerByRepo,
-			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_ = json.NewEncoder(w).Encode(gh.Repository{DefaultBranch: gh.Ptr("main")})
-			}),
-		),
-	)
-	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
-
-	err := release.Bootstrap(context.Background(), local, release.BootstrapInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
-		FirstVersion: "0.1.0", ActionRef: "main", ActionVersion: "main",
-		RemoteURL: upstream,
-	})
-	var scopeErr *release.MissingScopeError
-	if !errors.As(err, &scopeErr) {
-		t.Fatalf("err = %v, want *MissingScopeError", err)
-	}
-	if scopeErr.Required != "workflow" {
-		t.Errorf("Required = %q, want workflow", scopeErr.Required)
-	}
-	if len(scopeErr.Have) != 2 || scopeErr.Have[0] != "repo" {
-		t.Errorf("Have = %v, want [repo read:org]", scopeErr.Have)
-	}
-
-	// No remote-side effects: the bootstrap branch must not exist on
-	// the upstream because Bootstrap returned before fetch/push.
-	out, lserr := exec.Command("git", "-C", upstream, "branch", "--list", "releaser/pending-release").CombinedOutput()
-	if lserr != nil {
-		t.Fatalf("git branch --list: %v\n%s", lserr, out)
-	}
-	if strings.TrimSpace(string(out)) != "" {
-		t.Errorf("upstream has releaser/pending-release branch despite preflight failure: %q", out)
-	}
 }
 
 func TestBootstrap_ReturnsExistsSentinelWhenPROpen(t *testing.T) {
@@ -441,10 +385,9 @@ func TestBootstrap_ReturnsExistsSentinelWhenPROpen(t *testing.T) {
 		),
 	)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	err := release.Bootstrap(context.Background(), local, release.BootstrapInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		FirstVersion: "0.1.0", ActionRef: "main", ActionVersion: "main",
 		RemoteURL: upstream,
 	})
@@ -489,7 +432,7 @@ func TestBootstrap_ReplaceUpdatesExistingPR(t *testing.T) {
 
 	// Mock that always reports an existing PR (so the update path runs).
 	// Includes Git Data API handlers because Replace=true proceeds past
-	// the existing-PR check and creates the signed commit.
+	// the existing-PR check and creates the commit.
 	var prCreate, prUpdate atomic.Int32
 	httpClient := mock.NewMockedHTTPClient(
 		mock.WithRequestMatchHandler(
@@ -556,10 +499,9 @@ func TestBootstrap_ReplaceUpdatesExistingPR(t *testing.T) {
 		),
 	)
 	ghClient := releasergh.NewClient(httpClient)
-	tp := &fakeTokenProvider{token: "ghs_testtoken"}
 
 	if err := release.Bootstrap(context.Background(), local, release.BootstrapInputs{
-		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, TokenProvider: tp,
+		Config: cfg, Adapter: generic.New(), GitHubClient: ghClient, Committer: release.APICommitter{Client: ghClient},
 		FirstVersion: "0.1.0", ActionRef: "main", ActionVersion: "main",
 		RemoteURL: upstream, Replace: true,
 	}); err != nil {

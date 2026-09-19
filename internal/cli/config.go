@@ -18,7 +18,7 @@ func newConfigCommand() *cobra.Command {
 The top-level keys are:
 
   adapter   stack-adapter type and adapter-owned fields (build, version)
-  release   pending-release branch name, default branch, bot identity
+  release   pending-release branch name, default branch, workflow auth
   commit    conventional-commit → bump-level overrides
   workflows file names for the workflows produced by ` + "`releaser generate`" + `
 

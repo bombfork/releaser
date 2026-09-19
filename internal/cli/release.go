@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +11,6 @@ import (
 	"github.com/bombfork/releaser/internal/adapter"
 	"github.com/bombfork/releaser/internal/adapters"
 	"github.com/bombfork/releaser/internal/config"
-	"github.com/bombfork/releaser/internal/github"
 	"github.com/bombfork/releaser/internal/release"
 )
 
@@ -93,65 +91,60 @@ func runReleaseDryRun(cmd *cobra.Command, repoRoot string) error {
 }
 
 func newReleasePrepareCommand() *cobra.Command {
-	var force, dryRun bool
+	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "prepare",
 		Short: "Maintain the pending-release pull request",
 		Long: `Compute the next release version from commits since the latest tag,
 apply the version-file bump on the configured side branch
-(release.branch_name, default releaser/pending-release), force-push
-that branch, and open or update the matching pull request.
+(release.branch_name, default releaser/pending-release), and open or
+update the matching pull request. The local checkout is never touched.
+
+In CI the release-prep commit is created via the GitHub API with the
+workflow's App installation token, so GitHub attributes and signs it
+as the App bot. Locally the commit goes through your own git (in a
+temporary worktree): your identity, signing config, and push
+credentials apply, and your GitHub token comes from ` + "`gh auth token`" + `.
 
 Idempotent: re-running on the same default-branch HEAD produces an
 equivalent end state. When no commits since the latest release warrant
 a version bump, prepare exits cleanly with no side effects.
 
-The worktree-clean check protects against silently discarding
-uncommitted changes during the branch reset. Use --force to override.
-
 With --dry-run, runs only the read-only steps (Fetch, GetRepo,
 BuildPlan, GetPRByHead) and prints a description of what the real run
-would do; safety-check failures become warnings rather than errors.`,
+would do.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			repoRoot, err := cmd.Flags().GetString(RepoRootFlag)
 			if err != nil {
 				return err
 			}
-			return runReleasePrepare(cmd, repoRoot, force, dryRun)
+			return runReleasePrepare(cmd, repoRoot, dryRun)
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "Skip worktree-clean safety checks")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what prepare would do without making any changes")
 	return cmd
 }
 
-func runReleasePrepare(cmd *cobra.Command, repoRoot string, force, dryRun bool) error {
+func runReleasePrepare(cmd *cobra.Command, repoRoot string, dryRun bool) error {
 	cfg, ad, err := loadConfigAndAdapter(repoRoot)
 	if err != nil {
 		return err
 	}
-	if err := applyAppBotIdentity(cmd.Context(), cfg); err != nil {
+	deps, err := buildReleaseDeps(cmd.Context(), repoRoot, cmd.OutOrStdout())
+	if err != nil {
 		return err
-	}
-	tp, err := github.DefaultTokenProvider()
-	if err != nil {
-		return fmt.Errorf("resolve token provider: %w", err)
-	}
-	ghClient, err := github.NewClientFromTokenProvider(tp)
-	if err != nil {
-		return fmt.Errorf("build github client: %w", err)
 	}
 	sw := openStepSummary()
 	defer func() { _ = sw.Close() }()
 	return release.Prepare(cmd.Context(), repoRoot, release.PrepareInputs{
-		Config:        *cfg,
-		Adapter:       ad,
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Force:         force,
-		DryRun:        dryRun,
-		Stdout:        cmd.OutOrStdout(),
-		Summary:       sw,
+		Config:       *cfg,
+		Adapter:      ad,
+		GitHubClient: deps.Client,
+		Committer:    deps.Committer,
+		Auth:         deps.Auth,
+		DryRun:       dryRun,
+		Stdout:       cmd.OutOrStdout(),
+		Summary:      sw,
 	})
 }
 
@@ -196,54 +189,23 @@ func runReleasePublish(cmd *cobra.Command, repoRoot string, force, dryRun bool) 
 	if err != nil {
 		return err
 	}
-	if err := applyAppBotIdentity(cmd.Context(), cfg); err != nil {
+	deps, err := buildReleaseDeps(cmd.Context(), repoRoot, cmd.OutOrStdout())
+	if err != nil {
 		return err
-	}
-	tp, err := github.DefaultTokenProvider()
-	if err != nil {
-		return fmt.Errorf("resolve token provider: %w", err)
-	}
-	ghClient, err := github.NewClientFromTokenProvider(tp)
-	if err != nil {
-		return fmt.Errorf("build github client: %w", err)
 	}
 	sw := openStepSummary()
 	defer func() { _ = sw.Close() }()
 	return release.Publish(cmd.Context(), repoRoot, release.PublishInputs{
-		Config:        *cfg,
-		Adapter:       ad,
-		GitHubClient:  ghClient,
-		TokenProvider: tp,
-		Stdout:        cmd.OutOrStdout(),
-		Stderr:        cmd.ErrOrStderr(),
-		Force:         force,
-		DryRun:        dryRun,
-		Summary:       sw,
+		Config:       *cfg,
+		Adapter:      ad,
+		GitHubClient: deps.Client,
+		Auth:         deps.Auth,
+		Stdout:       cmd.OutOrStdout(),
+		Stderr:       cmd.ErrOrStderr(),
+		Force:        force,
+		DryRun:       dryRun,
+		Summary:      sw,
 	})
-}
-
-// applyAppBotIdentity patches cfg.Release.BotIdentity from the GitHub
-// API when auth.mode is github_app. Kept at the CLI entry so the
-// `release` package's ResolveIdentity stays a pure function of (repo,
-// config). No-op in any other auth mode, or outside CI (no env vars to
-// read from).
-func applyAppBotIdentity(ctx context.Context, cfg *config.Config) error {
-	if cfg.Release.Auth.Mode != config.AuthModeGitHubApp {
-		return nil
-	}
-	env := release.ReadAppBotIdentityEnv()
-	if env.AppID == "" || env.PrivateKeyPEM == "" {
-		// Not in an environment where the App credentials are
-		// available — leave cfg alone. ResolveIdentity will fall
-		// back to the configured (or default) BotIdentity.
-		return nil
-	}
-	id, err := release.AppBotIdentity(ctx, env, nil)
-	if err != nil {
-		return fmt.Errorf("derive app bot identity: %w", err)
-	}
-	cfg.Release.BotIdentity = config.BotIdentity{Name: id.Name, Email: id.Email}
-	return nil
 }
 
 // loadConfigAndAdapter loads the on-disk configuration and resolves its

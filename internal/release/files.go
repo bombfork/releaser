@@ -107,9 +107,8 @@ func FileAtRef(repoRoot, ref, relPath string) ([]byte, string, error) {
 // PlanVersionFileRewrites reads each cfg.Adapter.Version.Locations entry
 // from the commit at ref in the local repository, applies the regex
 // bump that swaps the captured group for newVersion, and returns the
-// resulting in-memory file changes ready to be handed to
-// github.Client.CreateSignedCommit. Returns nil in library mode (no
-// version locations configured).
+// resulting in-memory file changes ready to be handed to a Committer.
+// Returns nil in library mode (no version locations configured).
 //
 // Reading from the git tree — not the worktree — makes the rewrite a
 // pure function of the source commit, independent of whatever local
